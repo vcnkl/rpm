@@ -14,6 +14,10 @@ func IsTracked(path string) (bool, error) {
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
+			// assume tracked when not in a git repo
+			if exitError.ExitCode() == 128 {
+				return true, nil
+			}
 			return false, nil
 		}
 		return false, err

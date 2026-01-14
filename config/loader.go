@@ -19,7 +19,11 @@ func findRepoRoot() string {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	output, err := cmd.Output()
 	if err != nil {
-		panic(fmt.Sprintf("failed to find git repo root: %v", err))
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			panic(fmt.Sprintf("failed to find git repo root and current directory: %v, %v", err, cwdErr))
+		}
+		return cwd
 	}
 	return strings.TrimSpace(string(output))
 }
