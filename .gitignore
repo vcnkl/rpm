@@ -18,6 +18,7 @@ test-results/
 # Secrets
 .env*
 !.env.example
+!integration/testdata/**/.env
 
 # OS files
 .DS_Store
