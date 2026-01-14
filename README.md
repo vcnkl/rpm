@@ -1,6 +1,12 @@
 # RPM (Repo Manager)
 
-Build orchestration tool for monorepos.
+Language agnostic build orchestration tool for monorepos.
+
+## Installation
+
+```shell
+wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
+```
 
 ## Configuration
 
