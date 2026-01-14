@@ -1,0 +1,7 @@
+shell: /bin/sh
+env:
+  GLOBAL_VAR: "global_value"
+  PROJECT_NAME: "sample-repo"
+
+docker:
+  backend: local

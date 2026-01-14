@@ -1,0 +1,23 @@
+name: ts-app
+
+env:
+  TS_VAR: "typescript_value"
+
+targets:
+  - name: app_build
+    in:
+      - "src/**/*.ts"
+    out:
+      - dist/index.js
+    cmd: npx tsc
+    config:
+      working_dir: local
+
+  - name: app_dev
+    deps:
+      - ":app_build"
+    cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT TS_VAR=$TS_VAR"
+    config:
+      dotenv:
+        enabled: false
+      reload: true

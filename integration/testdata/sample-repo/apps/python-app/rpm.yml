@@ -1,0 +1,17 @@
+name: python-app
+
+env:
+  PYTHON_VAR: "python_value"
+
+targets:
+  - name: app_dev
+    cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR"
+    config:
+      dotenv:
+        enabled: true
+      reload: false
+
+  - name: app_test
+    cmd: python -m pytest tests/
+    config:
+      working_dir: local

@@ -1,0 +1,28 @@
+# Builds
+.build/
+
+# Temporary files
+tmp/
+*.log
+.rpm
+
+# Code coverage / test artifacts
+*.out
+coverage.*
+.coverage
+*.coverprofile
+profile.cov
+htmlcov/
+test-results/
+
+# Secrets
+.env*
+!.env.example
+
+# OS files
+.DS_Store
+
+# Editor/IDE
+.idea
+*.iml
+.vscode

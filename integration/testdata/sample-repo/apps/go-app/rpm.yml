@@ -1,0 +1,33 @@
+name: go-app
+
+env:
+  GO_VAR: "go_value"
+  APP_PORT: "8080"
+
+targets:
+  - name: app_build
+    in:
+      - "*.go"
+    out:
+      - bin/app
+    cmd: go build -o bin/app .
+    env:
+      BUILD_MODE: "release"
+    config:
+      working_dir: local
+
+  - name: app_dev
+    deps:
+      - ":app_build"
+    cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR"
+    config:
+      dotenv:
+        enabled: true
+      reload: true
+      ignore:
+        - "bin/**"
+
+  - name: app_test
+    cmd: go test ./...
+    config:
+      working_dir: local
