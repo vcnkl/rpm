@@ -127,6 +127,7 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 				WorkingDir: tc.Config.WorkingDir,
 				Dotenv: models.DotenvConfig{
 					Enabled: *tc.Config.Dotenv.Enabled,
+					Files:   tc.Config.Dotenv.Files,
 				},
 				Reload: *tc.Config.Reload,
 				Ignore: tc.Config.Ignore,

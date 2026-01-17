@@ -22,7 +22,8 @@ type TargetOptions struct {
 }
 
 type DotenvConfig struct {
-	Enabled *bool `koanf:"enabled"`
+	Enabled *bool    `koanf:"enabled"`
+	Files   []string `koanf:"files"`
 }
 
 func (t *TargetConfig) GetCmd() string {

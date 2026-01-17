@@ -21,6 +21,7 @@ type TargetConfig struct {
 
 type DotenvConfig struct {
 	Enabled bool
+	Files   []string
 }
 
 func (t *Target) ID() string {
