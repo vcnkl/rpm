@@ -40,11 +40,17 @@ func ComposeEnv(repoRoot string, repo *config.RepoConfig, bundle *models.Bundle,
 		}
 
 		for _, file := range target.Config.Dotenv.Files {
-			filePath := filepath.Join(bundleRoot, file)
-			fileVars, err := LoadDotenv(filePath)
-			if err == nil {
-				for k, v := range fileVars {
-					env = append(env, k+"="+v)
+			pattern := filepath.Join(bundleRoot, file)
+			matches, err := filepath.Glob(pattern)
+			if err != nil || len(matches) == 0 {
+				matches = []string{pattern}
+			}
+			for _, filePath := range matches {
+				fileVars, err := LoadDotenv(filePath)
+				if err == nil {
+					for k, v := range fileVars {
+						env = append(env, k+"="+v)
+					}
 				}
 			}
 		}
