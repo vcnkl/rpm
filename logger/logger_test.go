@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -139,6 +140,17 @@ func TestNew(t *testing.T) {
 			assert.NotNil(t, log)
 		})
 	}
+}
+
+func TestNewWithDateTimeFormat(t *testing.T) {
+	original := zerolog.TimeFieldFormat
+	defer func() {
+		zerolog.TimeFieldFormat = original
+	}()
+
+	log := NewWithDateTimeFormat(InfoLevel, "2006-01-02 15:04:05")
+	assert.NotNil(t, log)
+	assert.Equal(t, "2006-01-02 15:04:05", zerolog.TimeFieldFormat)
 }
 
 func TestLogger_WithPrefix(t *testing.T) {

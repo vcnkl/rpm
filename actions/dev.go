@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -125,8 +126,8 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 			WorkDir: workDir,
 			Env:     env,
 			Shell:   a.config.Repo().Shell,
-			Stdout:  targetLog.Writer(),
-			Stderr:  targetLog.Writer(),
+			Stdout:  os.Stdout,
+			Stderr:  os.Stderr,
 		})
 	}
 
@@ -157,8 +158,8 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 		cmd = exec.Command(shellParts[0], shellArgs...)
 		cmd.Dir = workDir
 		cmd.Env = env
-		cmd.Stdout = targetLog.Writer()
-		cmd.Stderr = targetLog.Writer()
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		if startErr := cmd.Start(); startErr != nil {

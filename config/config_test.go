@@ -23,6 +23,11 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Docker: DockerConfig{
 					Backend: "local",
 				},
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02T15:04:05Z07:00",
+					},
+				},
 			},
 		},
 		{
@@ -35,6 +40,11 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Env:   map[string]string{},
 				Docker: DockerConfig{
 					Backend: "local",
+				},
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02T15:04:05Z07:00",
+					},
 				},
 			},
 		},
@@ -53,6 +63,11 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 					Backend: "remote",
 					URL:     "tcp://localhost:2375",
 				},
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02T15:04:05Z07:00",
+					},
+				},
 			},
 		},
 		{
@@ -65,6 +80,33 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Env:   map[string]string{"FOO": "bar"},
 				Docker: DockerConfig{
 					Backend: "local",
+				},
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02T15:04:05Z07:00",
+					},
+				},
+			},
+		},
+		{
+			name: "preserves existing logger datetime format",
+			initial: RepoConfig{
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02 15:04:05",
+					},
+				},
+			},
+			expected: RepoConfig{
+				Shell: "/bin/sh",
+				Env:   map[string]string{},
+				Docker: DockerConfig{
+					Backend: "local",
+				},
+				Logger: LoggerConfig{
+					DateTime: LoggerDateTimeConfig{
+						Format: "2006-01-02 15:04:05",
+					},
 				},
 			},
 		},
@@ -79,6 +121,7 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			assert.Equal(t, tt.expected.Env, cfg.Env)
 			assert.Equal(t, tt.expected.Docker.Backend, cfg.Docker.Backend)
 			assert.Equal(t, tt.expected.Docker.URL, cfg.Docker.URL)
+			assert.Equal(t, tt.expected.Logger.DateTime.Format, cfg.Logger.DateTime.Format)
 		})
 	}
 }

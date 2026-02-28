@@ -37,10 +37,10 @@ func GraphCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			log := logger.New(level)
-			_ = log
 
 			cfg := config.NewConfig()
+			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
+			_ = log
 
 			graph := dag.NewGraph()
 			for _, bundle := range cfg.Bundles() {

@@ -59,13 +59,20 @@ type logger struct {
 }
 
 func New(level Level) Logger {
+	return NewWithDateTimeFormat(level, "")
+}
+
+func NewWithDateTimeFormat(level Level, dateTimeFormat string) Logger {
+	dateTimeFormat = normalizeDateTimeFormat(dateTimeFormat)
+	zerolog.TimeFieldFormat = dateTimeFormat
+
 	out := os.Stdout
 	var zl zerolog.Logger
 
 	if isatty.IsTerminal(out.Fd()) {
 		zl = zerolog.New(zerolog.ConsoleWriter{
 			Out:        out,
-			TimeFormat: time.RFC3339,
+			TimeFormat: dateTimeFormat,
 		}).With().Timestamp().Logger()
 	} else {
 		zl = zerolog.New(out).With().Timestamp().Logger()
@@ -83,6 +90,13 @@ func New(level Level) Logger {
 	}
 
 	return &logger{zlog: zl}
+}
+
+func normalizeDateTimeFormat(dateTimeFormat string) string {
+	if strings.TrimSpace(dateTimeFormat) == "" {
+		return time.RFC3339
+	}
+	return dateTimeFormat
 }
 
 func (l *logger) WithPrefix(prefix string) Logger {

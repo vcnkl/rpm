@@ -26,9 +26,8 @@ func RunCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			log := logger.New(level)
-
 			cfg := config.NewConfig()
+			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 
 			graph := dag.NewGraph()
 			for _, bundle := range cfg.Bundles() {

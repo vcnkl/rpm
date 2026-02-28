@@ -16,6 +16,9 @@ wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
 shell: '/usr/bin/env bash'    # Default shell for commands
 env:                          # Global environment variables
   PROJECT: 'my-project'
+logger:
+  datetime:
+    format: '2006-01-02T15:04:05Z07:00' # Go time layout for rpm log timestamps
 docker:                       # Docker backend configuration
   backend: local              # or 'remote'
 deps:                         # External dependencies to check/install
