@@ -312,13 +312,26 @@ func (a *DevAction) runBundleBuildTargets(ctx context.Context, _ string, targetI
 }
 
 func buildTargetsByBundle(graph *dag.Graph, targetIDs []string) map[string][]string {
-	subgraph := graph.SubgraphFor(targetIDs)
+	selectedBundles := make(map[string]struct{}, len(targetIDs))
+	for _, id := range targetIDs {
+		node, ok := graph.Nodes[id]
+		if !ok {
+			continue
+		}
+		selectedBundles[node.Target.BundleName] = struct{}{}
+	}
+
 	targetsByBundle := make(map[string][]string)
 
-	for _, node := range subgraph.Nodes {
+	for _, node := range graph.Nodes {
 		if !node.Target.HasSuffix("_build") {
 			continue
 		}
+
+		if _, ok := selectedBundles[node.Target.BundleName]; !ok {
+			continue
+		}
+
 		targetsByBundle[node.Target.BundleName] = append(targetsByBundle[node.Target.BundleName], node.ID)
 	}
 

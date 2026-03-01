@@ -19,6 +19,7 @@ func TestBuildTargetsByBundle(t *testing.T) {
 
 	fooSharedBuild := &models.Target{Name: "shared_build", BundleName: "foo", BundlePath: "apps/foo"}
 	fooAppBuild := &models.Target{Name: "app_build", BundleName: "foo", BundlePath: "apps/foo", Deps: []string{":shared_build"}}
+	fooAssetsBuild := &models.Target{Name: "assets_build", BundleName: "foo", BundlePath: "apps/foo"}
 	fooAppDev := &models.Target{Name: "app_dev", BundleName: "foo", BundlePath: "apps/foo", Deps: []string{":app_build"}}
 	fooApiDev := &models.Target{Name: "api_dev", BundleName: "foo", BundlePath: "apps/foo", Deps: []string{":app_build"}}
 	barLibBuild := &models.Target{Name: "lib_build", BundleName: "bar", BundlePath: "apps/bar"}
@@ -27,6 +28,7 @@ func TestBuildTargetsByBundle(t *testing.T) {
 	for _, target := range []*models.Target{
 		fooSharedBuild,
 		fooAppBuild,
+		fooAssetsBuild,
 		fooAppDev,
 		fooApiDev,
 		barLibBuild,
@@ -39,7 +41,7 @@ func TestBuildTargetsByBundle(t *testing.T) {
 		"foo": {
 			Name:    "foo",
 			Path:    "apps/foo",
-			Targets: []*models.Target{fooSharedBuild, fooAppBuild, fooAppDev, fooApiDev},
+			Targets: []*models.Target{fooSharedBuild, fooAppBuild, fooAssetsBuild, fooAppDev, fooApiDev},
 		},
 		"bar": {
 			Name:    "bar",
@@ -52,7 +54,37 @@ func TestBuildTargetsByBundle(t *testing.T) {
 	result := buildTargetsByBundle(graph, []string{fooAppDev.ID(), fooApiDev.ID()})
 
 	require.Len(t, result, 1)
-	assert.Equal(t, []string{"foo:app_build", "foo:shared_build"}, result["foo"])
+	assert.Equal(t, []string{"foo:app_build", "foo:assets_build", "foo:shared_build"}, result["foo"])
+}
+
+func TestBuildTargetsByBundle_DevTargetWithoutBuildDepsStillIncludesBundleBuildTargets(t *testing.T) {
+	graph := dag.NewGraph()
+
+	fooBuild := &models.Target{Name: "app_build", BundleName: "foo", BundlePath: "apps/foo"}
+	fooAssetsBuild := &models.Target{Name: "assets_build", BundleName: "foo", BundlePath: "apps/foo"}
+	fooDev := &models.Target{Name: "app_dev", BundleName: "foo", BundlePath: "apps/foo"}
+
+	for _, target := range []*models.Target{
+		fooBuild,
+		fooAssetsBuild,
+		fooDev,
+	} {
+		graph.AddTarget(target)
+	}
+
+	err := graph.Resolve(map[string]*models.Bundle{
+		"foo": {
+			Name:    "foo",
+			Path:    "apps/foo",
+			Targets: []*models.Target{fooBuild, fooAssetsBuild, fooDev},
+		},
+	})
+	require.NoError(t, err)
+
+	result := buildTargetsByBundle(graph, []string{fooDev.ID()})
+
+	require.Len(t, result, 1)
+	assert.Equal(t, []string{"foo:app_build", "foo:assets_build"}, result["foo"])
 }
 
 func TestBundleBuildCoordinator_DedupesConcurrentBuilds(t *testing.T) {
