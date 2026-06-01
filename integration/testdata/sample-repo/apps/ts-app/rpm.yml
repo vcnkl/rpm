@@ -8,8 +8,7 @@ env:
       image: mailhog/mailhog:v1.0.1
       mode: shared
       ports:
-        - "1025:1025"
-        - "8025:8025"
+        - "1025"
 
 targets:
   - name: app_build

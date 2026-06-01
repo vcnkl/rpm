@@ -12,7 +12,7 @@ rpm_dependency(
     image = "postgres:16",
     mode = "shared",
     env = {"POSTGRES_PASSWORD": "example"},
-    ports = ["5432:5432"],
+    ports = ["5432"],
     volumes = ["postgres-data:/var/lib/postgresql/data"],
 )
 rpm_dependency(
@@ -30,7 +30,7 @@ rpm_dependency(
     image = "mailhog/mailhog:v1.0.1",
     mode = "shared",
     env = {},
-    ports = ["1025:1025", "8025:8025"],
+    ports = ["1025"],
     volumes = [],
 )
 

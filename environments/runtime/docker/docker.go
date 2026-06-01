@@ -3,11 +3,14 @@ package docker
 import (
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/pkg/errors"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
@@ -15,12 +18,18 @@ type CommandRunner interface {
 	Run(ctx context.Context, name string, args ...string) error
 }
 
+type PortAllocator interface {
+	Allocate(ctx context.Context) (int, error)
+}
+
 type Options struct {
 	CommandRunner CommandRunner
+	PortAllocator PortAllocator
 }
 
 type CLI struct {
-	runner CommandRunner
+	runner        CommandRunner
+	portAllocator PortAllocator
 }
 
 func NewCLI(opts Options) *CLI {
@@ -28,7 +37,11 @@ func NewCLI(opts Options) *CLI {
 	if runner == nil {
 		runner = osRunner{}
 	}
-	return &CLI{runner: runner}
+	portAllocator := opts.PortAllocator
+	if portAllocator == nil {
+		portAllocator = ephemeralPortAllocator{}
+	}
+	return &CLI{runner: runner, portAllocator: portAllocator}
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
@@ -43,7 +56,10 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			}
 		}
 		for _, name := range containerNames(blueprint, dep, plan.Targets) {
-			args := dockerRunArgs(network, name, dep)
+			args, err := c.dockerRunArgs(ctx, network, name, dep)
+			if err != nil {
+				return err
+			}
 			if err := c.runner.Run(ctx, "docker", args...); err != nil {
 				return err
 			}
@@ -82,6 +98,22 @@ func (osRunner) Run(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
+type ephemeralPortAllocator struct{}
+
+func (ephemeralPortAllocator) Allocate(ctx context.Context) (int, error) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("unexpected listener address %q", listener.Addr().String())
+	}
+	return addr.Port, nil
+}
+
 type CommandError struct {
 	Name   string
 	Args   []string
@@ -108,7 +140,7 @@ func networkName(blueprint string) string {
 	return "rpm-" + sanitize(blueprint)
 }
 
-func dockerRunArgs(network string, name string, dep envstarlark.Dependency) []string {
+func (c *CLI) dockerRunArgs(ctx context.Context, network string, name string, dep envstarlark.Dependency) ([]string, error) {
 	args := []string{"run", "--detach", "--name", name, "--network", network}
 	envKeys := make([]string, 0, len(dep.Env))
 	for key := range dep.Env {
@@ -119,14 +151,34 @@ func dockerRunArgs(network string, name string, dep envstarlark.Dependency) []st
 		value := dep.Env[key]
 		args = append(args, "--env", key+"="+value)
 	}
-	for _, port := range dep.Ports {
+	ports, err := c.publishPorts(ctx, dep.Ports)
+	if err != nil {
+		return nil, err
+	}
+	for _, port := range ports {
 		args = append(args, "--publish", port)
 	}
 	for _, volume := range dep.Volumes {
 		args = append(args, "--volume", volume)
 	}
 	args = append(args, dep.Image)
-	return args
+	return args, nil
+}
+
+func (c *CLI) publishPorts(ctx context.Context, ports []string) ([]string, error) {
+	if len(ports) != 1 || !singleContainerPort(ports[0]) {
+		return append([]string{}, ports...), nil
+	}
+	hostPort, err := c.portAllocator.Allocate(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to allocate dependency host port")
+	}
+	return []string{strconv.Itoa(hostPort) + ":" + ports[0]}, nil
+}
+
+func singleContainerPort(port string) bool {
+	port = strings.TrimSpace(port)
+	return port != "" && !strings.Contains(port, ":")
 }
 
 func containerNames(blueprint string, dep envstarlark.Dependency, targets []envstarlark.TargetProcess) []string {

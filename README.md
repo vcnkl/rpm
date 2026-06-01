@@ -77,7 +77,7 @@ env:
       env:
         POSTGRES_PASSWORD: example
       ports:
-        - "5432:5432"
+        - "5432"
       volumes:
         - postgres-data:/var/lib/postgresql/data
     - name: redis
@@ -148,7 +148,7 @@ variables:
   LOG_LEVEL: debug
 ```
 
-Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `pre` entries run after dependencies and before target processes; they can reference other `rpm.yml` targets, bundle/repo script paths, or inline YAML pipe commands. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
+Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `pre` entries run after dependencies and before target processes; they can reference other `rpm.yml` targets, bundle/repo script paths, or inline YAML pipe commands. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. A single bare dependency port such as `"5432"` is published on a dynamically selected ephemeral host port; explicit mappings such as `"5432:5432"` are preserved. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
 
 `rpm env render <blueprint>` validates the blueprint, resolves repo/bundle/target config, and writes deterministic Starlark under `.rpm/cache/starlark/<blueprint>/env.star`. `rpm env up <blueprint>` runs the same validation and render pipeline, evaluates the generated Starlark runtime plan, starts dependency containers, runs `pre` scripts, starts target processes, and restarts affected target processes when watched files change. In interactive mode it opens the embedded React/Ink TUI; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
 
