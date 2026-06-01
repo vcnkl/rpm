@@ -10,10 +10,13 @@ targets:
         APP_PORT: "8080"
     - ref: ts-app:web
       reload: true
+    - ref: python-app:serve
+      reload: false
 dependencies:
     enabled: true
     include:
         - go-app:postgres
+        - python-app:redis
         - ts-app:mailhog
     exclude: []
 variables:

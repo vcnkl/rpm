@@ -1,6 +1,15 @@
 # RPM (Repo Manager)
 
-Language agnostic build orchestration tool for monorepos.
+Language-agnostic build orchestration and local environment runtime for monorepos.
+
+## Current Command Model
+
+RPM now has a hard split between build/test/run orchestration and environment runtime orchestration:
+
+- `rpm build` builds filesystem-output targets only. `rpm build --docker`, Docker build backend config, `_image` target conventions and `@docker::...` outputs are removed.
+- `rpm dev` is removed. Use `rpm env create`, `rpm env render` and `rpm env up` for local environment workflows.
+- `_dev` target suffixes are ordinary target names and are no longer selected specially.
+- Environment containers are still supported as runtime dependencies under bundle `dependencies`; this is separate from the removed Docker build backend.
 
 ## Installation
 
@@ -55,6 +64,28 @@ targets:
         - '*.log'
 ```
 
+Bundle-level environment dependencies are declared next to targets and use tagged Docker image references. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
+
+```yaml
+name: api
+dependencies:
+  - name: postgres
+    image: postgres:16
+    mode: shared              # one container per blueprint dependency
+    env:
+      POSTGRES_PASSWORD: example
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  - name: redis
+    image: redis:7
+    mode: dedicated           # one container per selected target in this bundle
+targets:
+  - name: serve
+    cmd: go run .
+```
+
 ## Commands
 
 **Important**: Flags must come BEFORE target names (urfave/cli requirement).
@@ -76,15 +107,15 @@ rpm test                            # Run all *_test targets
 
 ### env
 ```bash
-rpm env create [blueprint]          # Create an environment blueprint
-rpm env edit <blueprint>            # Edit an environment blueprint
-rpm env validate <blueprint>        # Validate an environment blueprint
-rpm env render <blueprint>          # Render deterministic environment Starlark
-rpm env up <blueprint>              # Validate, render, and run an environment
-rpm env down <blueprint>            # Stop a running environment
+rpm env create [blueprint] --target bundle:target [--deps]
+rpm env edit <blueprint> --add-target bundle:target
+rpm env validate <blueprint>
+rpm env render <blueprint> [--out path]
+rpm env up <blueprint> [--non-interactive] [--no-reload] [--no-deps] [--render-only]
+rpm env down <blueprint>
 ```
 
-Environment blueprints are committed YAML files stored in `.rpm/envs/<name>.yml`:
+Environment blueprints are committed YAML files stored in `.rpm/envs/<name>.yml`. They select explicit target refs and dependency refs; RPM does not infer dev targets from suffixes.
 
 ```yaml
 version: 1
@@ -103,12 +134,17 @@ dependencies:
   enabled: true
   include:
     - go-app:postgres
+    - python-app:redis
   exclude: []
 variables:
   LOG_LEVEL: debug
 ```
 
-Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
+Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
+
+`rpm env render <blueprint>` validates the blueprint, resolves repo/bundle/target config, and writes deterministic Starlark under `.rpm/cache/starlark/<blueprint>/env.star`. `rpm env up <blueprint>` runs the same validation and render pipeline, evaluates the generated Starlark runtime plan, starts dependency containers, starts target processes, and restarts affected target processes when watched files change. In interactive mode it opens the embedded React/Ink TUI; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
+
+`rpm env down <blueprint>` removes dependency containers and the environment network for that blueprint. It does not stop arbitrary external processes.
 
 ### run
 ```bash
@@ -148,14 +184,16 @@ Composed in order (later overrides earlier):
 ## Caching
 
 - Input hash: SHA256 of all files matching `in` patterns
-- Cache stored in `.rpm/cache/builds.json`
+- Generated state is stored under ignored `.rpm/cache/`, including build cache, DAG cache and generated Starlark.
 - Cache hit requires: same input hash + all `out` files exist
 - Dependency rebuild propagates to dependents
 
 ## Environment Runtime
 
-- Watches bundle directory for file changes
-- Respects `config.ignore` patterns
-- `config.reload: true` (default): Restarts process on change
-- `config.reload: false`: Runs once without watching
-- Process groups for clean shutdown (SIGTERM → SIGKILL)
+- Target commands use the resolved working directory from `config.working_dir`.
+- Target environments preserve the old `dev` composition order for convenience: host env, repo env, `REPO_ROOT`, `BUNDLE_ROOT`, bundle env, target env, blueprint variables, blueprint target env and configured dotenv files.
+- Watch roots default to the bundle root or the target `in` patterns, and ignore entries come from target config.
+- `--no-reload` disables watchers at runtime without mutating the committed blueprint.
+- `--no-deps` skips dependency containers while still running targets.
+- Runtime dependencies use Docker CLI orchestration: network creation, volume creation, detached containers, container removal and network removal.
+- Runtime planning is intentionally modular: blueprint loading, normalized environment spec, Starlark generation, Starlark evaluation, runtime interfaces and TUI bridge are separate packages so future commands can compose them without changing blueprint semantics.

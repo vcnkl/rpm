@@ -368,18 +368,22 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	go scanOutput(target.Ref, "stdout", stdout, sink)
-	go scanOutput(target.Ref, "stderr", stderr, sink)
-	process := &shellProcess{cmd: cmd, waitDone: make(chan struct{})}
+	stdoutDone := make(chan struct{})
+	stderrDone := make(chan struct{})
+	go scanOutput(target.Ref, "stdout", stdout, sink, stdoutDone)
+	go scanOutput(target.Ref, "stderr", stderr, sink, stderrDone)
+	process := &shellProcess{cmd: cmd, waitDone: make(chan struct{}), stdoutDone: stdoutDone, stderrDone: stderrDone}
 	go process.wait()
 	return process, nil
 }
 
 type shellProcess struct {
-	cmd      *exec.Cmd
-	waitDone chan struct{}
-	waitErr  error
-	once     sync.Once
+	cmd        *exec.Cmd
+	waitDone   chan struct{}
+	stdoutDone chan struct{}
+	stderrDone chan struct{}
+	waitErr    error
+	once       sync.Once
 }
 
 func (p *shellProcess) Wait() error {
@@ -407,11 +411,14 @@ func (p *shellProcess) Stop(ctx context.Context) error {
 func (p *shellProcess) wait() {
 	p.once.Do(func() {
 		p.waitErr = p.cmd.Wait()
+		<-p.stdoutDone
+		<-p.stderrDone
 		close(p.waitDone)
 	})
 }
 
 type LineEventSink struct {
+	mu  sync.Mutex
 	out io.Writer
 	err io.Writer
 }
@@ -424,6 +431,8 @@ func (s *LineEventSink) Emit(event Event) {
 	if s == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	w := s.out
 	if (event.Error != "" || event.Stream == "stderr") && s.err != nil {
 		w = s.err
@@ -453,7 +462,8 @@ func (w PrefixWriter) Write(data []byte) (int, error) {
 	return len(data), scanner.Err()
 }
 
-func scanOutput(ref string, stream string, reader io.Reader, sink EventSink) {
+func scanOutput(ref string, stream string, reader io.Reader, sink EventSink, done chan<- struct{}) {
+	defer close(done)
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		sink.Emit(Event{Type: EventProcessOutput, Ref: ref, Stream: stream, Line: scanner.Text()})

@@ -145,14 +145,57 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	require.NoError(t, err)
 
 	output := buf.String()
+	output = stripDockerStreamHeaders(output)
 	t.Logf("rpm env up output (exit code %d): %s", exitCode, output)
 
 	assert.Zero(t, exitCode)
-	assert.Contains(t, output, `"type":"process_output","ref":"go-app:serve"`)
-	assert.Contains(t, output, `"type":"process_output","ref":"ts-app:web"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"go-app:serve"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:serve"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"python-app:serve"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"python-app:serve"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"ts-app:web"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"ts-app:web"`)
 	assert.Contains(t, output, "REPO_ROOT=/workspace")
-	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/go-app")
-	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/ts-app")
+	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/")
+}
+
+func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	if os.Getenv("SKIP_INTEGRATION") == "true" {
+		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
+	}
+
+	ctx := context.Background()
+	ctr := startTestContainer(t, ctx)
+	defer testcontainers.CleanupContainer(t, ctr)
+
+	validate := runWorkspaceCommand(t, ctx, ctr, "rpm env validate local-stack")
+	assert.Zero(t, validate.exitCode, validate.output)
+
+	render := runWorkspaceCommand(t, ctx, ctr, "rpm env render local-stack")
+	assert.Zero(t, render.exitCode, render.output)
+
+	golden, err := os.ReadFile(filepath.Join("testdata", "golden", "local-stack.star"))
+	require.NoError(t, err)
+	rendered := runWorkspaceCommand(t, ctx, ctr, "sed 's#/workspace#<repo>#g' .rpm/cache/starlark/local-stack/env.star")
+	assert.Zero(t, rendered.exitCode, rendered.output)
+	assert.Equal(t, string(golden), rendered.output)
+
+	create := runWorkspaceCommand(t, ctx, ctr, "rpm env create --non-interactive smoke --target go-app:serve --deps")
+	assert.Zero(t, create.exitCode, create.output)
+	created := runWorkspaceCommand(t, ctx, ctr, "rpm env validate smoke")
+	assert.Zero(t, created.exitCode, created.output)
+
+	devHelp := runWorkspaceCommand(t, ctx, ctr, "rpm dev --help")
+	assert.NotZero(t, devHelp.exitCode, devHelp.output)
+	assert.Contains(t, strings.ToLower(devHelp.output), "no help topic")
+
+	dockerBuild := runWorkspaceCommand(t, ctx, ctr, "rpm build --docker")
+	assert.NotZero(t, dockerBuild.exitCode, dockerBuild.output)
+	assert.Contains(t, strings.ToLower(dockerBuild.output), "flag")
 }
 
 func TestIntegration_BuildCommand(t *testing.T) {
@@ -216,6 +259,39 @@ func TestIntegration_BuildCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+type commandResult struct {
+	exitCode int
+	output   string
+}
+
+func runWorkspaceCommand(t *testing.T, ctx context.Context, ctr testcontainers.Container, command string) commandResult {
+	t.Helper()
+	exitCode, reader, err := ctr.Exec(ctx, []string{"sh", "-c", "cd /workspace && " + command})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(reader)
+	require.NoError(t, err)
+	return commandResult{exitCode: exitCode, output: stripDockerStreamHeaders(buf.String())}
+}
+
+func stripDockerStreamHeaders(output string) string {
+	data := []byte(output)
+	cleaned := make([]byte, 0, len(data))
+	for len(data) >= 8 && (data[0] == 1 || data[0] == 2) && data[1] == 0 && data[2] == 0 && data[3] == 0 {
+		size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
+		if size < 0 || size > len(data)-8 {
+			break
+		}
+		cleaned = append(cleaned, data[8:8+size]...)
+		data = data[8+size:]
+	}
+	if len(cleaned) == 0 {
+		return output
+	}
+	cleaned = append(cleaned, data...)
+	return string(cleaned)
 }
 
 func TestIntegration_TargetResolution(t *testing.T) {

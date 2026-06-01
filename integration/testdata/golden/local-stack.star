@@ -16,6 +16,15 @@ rpm_dependency(
     volumes = ["postgres-data:/var/lib/postgresql/data"],
 )
 rpm_dependency(
+    ref = "python-app:redis",
+    name = "redis",
+    image = "redis:7",
+    mode = "dedicated",
+    env = {},
+    ports = ["6379:6379"],
+    volumes = [],
+)
+rpm_dependency(
     ref = "ts-app:mailhog",
     name = "mailhog",
     image = "mailhog/mailhog:v1.0.1",
@@ -40,6 +49,20 @@ rpm_watch(
     enabled = True,
 )
 rpm_target(
+    ref = "python-app:serve",
+    command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR\"",
+    workdir = "<repo>/apps/python-app",
+    env = {"BUNDLE_ROOT": "<repo>/apps/python-app", "GLOBAL_VAR": "global_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "PYTHON_VAR": "python_value", "REPO_ROOT": "<repo>"},
+    reload = False,
+)
+rpm_watch(
+    target = "python-app:serve",
+    roots = ["<repo>/apps/python-app"],
+    ignore = [],
+    reload = False,
+    enabled = False,
+)
+rpm_target(
     ref = "ts-app:web",
     command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT TS_VAR=$TS_VAR\"",
     workdir = "<repo>/apps/ts-app",
@@ -55,5 +78,5 @@ rpm_watch(
 )
 
 rpm_run(
-    order = ["go-app:postgres", "ts-app:mailhog", "go-app:serve", "ts-app:web"],
+    order = ["go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:serve", "python-app:serve", "ts-app:web"],
 )
