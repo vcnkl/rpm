@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/pkg/errors"
 	rootconfig "github.com/vcnkl/rpm/config"
 	rpmexec "github.com/vcnkl/rpm/exec"
 	"github.com/vcnkl/rpm/models"
@@ -15,6 +17,7 @@ type ResolvedEnvironment struct {
 	Name         string
 	Variables    []EnvVar
 	Bundles      []Bundle
+	PreScripts   []PreScript
 	Targets      []Target
 	Dependencies []Dependency
 	RuntimeUnits []RuntimeUnit
@@ -36,6 +39,13 @@ type Target struct {
 	Reload      bool
 	Watch       Watch
 	Dotenv      Dotenv
+}
+
+type PreScript struct {
+	Ref        string
+	Command    string
+	WorkingDir string
+	Env        []EnvVar
 }
 
 type Dependency struct {
@@ -78,6 +88,13 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	}
 
 	bundleSeen := make(map[string]bool)
+	for i, pre := range blueprint.Pre {
+		script, err := ResolvePreScript(repo, blueprint, pre, i)
+		if err != nil {
+			return nil, err
+		}
+		resolved.PreScripts = append(resolved.PreScripts, script)
+	}
 	for _, bpTarget := range blueprint.Targets {
 		target, err := repo.ResolveTarget(bpTarget.Ref)
 		if err != nil {
@@ -150,6 +167,68 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 
 func ResolveWorkingDir(repoRoot string, target *models.Target) string {
 	return rpmexec.ResolveWorkDir(repoRoot, target)
+}
+
+func ResolvePreScript(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, pre models.EnvironmentPreScript, index int) (PreScript, error) {
+	ref := strings.TrimSpace(pre.Ref)
+	if inlinePreScript(ref) {
+		return PreScript{
+			Ref:        preScriptId("inline", index),
+			Command:    pre.Ref,
+			WorkingDir: repo.RepoRoot(),
+			Env:        ResolveRepoEnv(repo, blueprint),
+		}, nil
+	}
+	if strings.HasPrefix(ref, "/") {
+		path := filepath.Join(repo.RepoRoot(), strings.TrimPrefix(ref, "/"))
+		return PreScript{
+			Ref:        ref,
+			Command:    fileCommand(path),
+			WorkingDir: repo.RepoRoot(),
+			Env:        ResolveRepoEnv(repo, blueprint),
+		}, nil
+	}
+	if target, err := repo.ResolveTarget(ref); err == nil {
+		bundle := repo.Bundles()[target.BundleName]
+		return PreScript{
+			Ref:        target.ID(),
+			Command:    target.Cmd,
+			WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
+			Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
+		}, nil
+	}
+	bundleName, file, ok := strings.Cut(ref, ":")
+	if !ok || bundleName == "" || file == "" {
+		return PreScript{}, errors.Errorf("invalid pre script %q", pre.Ref)
+	}
+	bundle, ok := repo.Bundles()[bundleName]
+	if !ok {
+		return PreScript{}, errors.Errorf("unknown pre script bundle %q", bundleName)
+	}
+	bundleRoot := filepath.Join(repo.RepoRoot(), bundle.Path)
+	path := filepath.Join(bundleRoot, file)
+	return PreScript{
+		Ref:        ref,
+		Command:    fileCommand(path),
+		WorkingDir: bundleRoot,
+		Env:        ResolveBundleEnv(repo, bundle, blueprint),
+	}, nil
+}
+
+func ResolveRepoEnv(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) []EnvVar {
+	env := appendEnvMap(nil, repo.Repo().Env)
+	env = append(env, "REPO_ROOT="+repo.RepoRoot())
+	env = appendEnvMap(env, blueprint.Variables)
+	return mergeEnvVars(env)
+}
+
+func ResolveBundleEnv(repo *rootconfig.Config, bundle *models.Bundle, blueprint *models.EnvironmentBlueprint) []EnvVar {
+	env := appendEnvMap(nil, repo.Repo().Env)
+	env = append(env, "REPO_ROOT="+repo.RepoRoot())
+	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
+	env = appendEnvMap(env, bundle.Env)
+	env = appendEnvMap(env, blueprint.Variables)
+	return mergeEnvVars(env)
 }
 
 func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
@@ -258,6 +337,18 @@ func dependencyIncluded(policy models.DependencyPolicy, ref string) bool {
 		}
 	}
 	return false
+}
+
+func preScriptId(kind string, index int) string {
+	return "pre:" + kind + ":" + strconv.Itoa(index+1)
+}
+
+func fileCommand(path string) string {
+	return ". " + strconv.Quote(path)
+}
+
+func inlinePreScript(ref string) bool {
+	return strings.ContainsAny(ref, "\n\r \t")
 }
 
 func appendEnvMap(env []string, values map[string]string) []string {

@@ -23,12 +23,14 @@ var (
 	ErrUnknownBlueprintRef   = errors.New("unknown blueprint target ref")
 	ErrDuplicateBlueprintRef = errors.New("duplicate blueprint target ref")
 	ErrUnknownDependencyRef  = errors.New("unknown blueprint dependency ref")
+	ErrInvalidPreScript      = errors.New("invalid blueprint pre script")
 )
 
 type BlueprintConfig struct {
 	Version      int                `koanf:"version"`
 	Name         string             `koanf:"name"`
 	LiveReload   LiveReloadConfig   `koanf:"live_reload"`
+	Pre          []string           `koanf:"pre"`
 	Targets      []TargetConfig     `koanf:"targets"`
 	Dependencies DependenciesConfig `koanf:"dependencies"`
 	Variables    map[string]string  `koanf:"variables"`
@@ -103,6 +105,7 @@ func MarshalBlueprint(blueprint *models.EnvironmentBlueprint) ([]byte, error) {
 		scalarNode("version"), intNode(blueprint.Version),
 		scalarNode("name"), scalarNode(blueprint.Name),
 		scalarNode("live_reload"), liveReloadNode(blueprint.ReloadPolicy),
+		scalarNode("pre"), preScriptsNode(blueprint.Pre),
 		scalarNode("targets"), targetsNode(blueprint.Targets),
 		scalarNode("dependencies"), dependencyPolicyNode(blueprint.DependencyPolicy),
 		scalarNode("variables"), stringMapNode(blueprint.Variables),
@@ -143,6 +146,9 @@ func (c *BlueprintConfig) SetDefaults() {
 	if c.Variables == nil {
 		c.Variables = make(map[string]string)
 	}
+	if c.Pre == nil {
+		c.Pre = []string{}
+	}
 	for i := range c.Targets {
 		if c.Targets[i].Env == nil {
 			c.Targets[i].Env = make(map[string]string)
@@ -170,6 +176,11 @@ func (c *BlueprintConfig) Validate(repo *rootconfig.Config) error {
 			return errors.Wrapf(ErrUnknownBlueprintRef, "%s", target.Ref)
 		}
 	}
+	for _, pre := range c.Pre {
+		if err := validatePreScript(repo, pre); err != nil {
+			return err
+		}
+	}
 	dependencies := dependencyRefs(repo)
 	for _, ref := range append(append([]string{}, c.Dependencies.Include...), c.Dependencies.Exclude...) {
 		if !validBlueprintTargetRef(ref) {
@@ -183,6 +194,10 @@ func (c *BlueprintConfig) Validate(repo *rootconfig.Config) error {
 }
 
 func (c *BlueprintConfig) Blueprint() *models.EnvironmentBlueprint {
+	pre := make([]models.EnvironmentPreScript, 0, len(c.Pre))
+	for _, item := range c.Pre {
+		pre = append(pre, models.EnvironmentPreScript{Ref: item})
+	}
 	targets := make([]models.EnvironmentTarget, 0, len(c.Targets))
 	for _, target := range c.Targets {
 		targets = append(targets, models.EnvironmentTarget{
@@ -199,6 +214,7 @@ func (c *BlueprintConfig) Blueprint() *models.EnvironmentBlueprint {
 		Version:   c.Version,
 		Name:      c.Name,
 		Variables: c.Variables,
+		Pre:       pre,
 		Targets:   targets,
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: c.Dependencies.Enabled,
@@ -217,6 +233,37 @@ func validBlueprintTargetRef(ref string) bool {
 	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
 }
 
+func validatePreScript(repo *rootconfig.Config, ref string) error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return errors.Wrap(ErrInvalidPreScript, "empty pre script")
+	}
+	if inlinePreScript(ref) {
+		return nil
+	}
+	if strings.HasPrefix(ref, "/") {
+		return nil
+	}
+	bundleName, value, ok := strings.Cut(ref, ":")
+	if !ok {
+		return errors.Wrapf(ErrInvalidPreScript, "%s must be a target ref, bundle:path or /repo/path", ref)
+	}
+	if bundleName == "" || value == "" {
+		return errors.Wrapf(ErrInvalidPreScript, "%s must include bundle and target/path", ref)
+	}
+	if _, err := repo.ResolveTarget(ref); err == nil {
+		return nil
+	}
+	if _, ok := repo.Bundles()[bundleName]; !ok {
+		return errors.Wrapf(ErrInvalidPreScript, "unknown bundle %s", bundleName)
+	}
+	return nil
+}
+
+func inlinePreScript(ref string) bool {
+	return strings.ContainsAny(ref, "\n\r \t")
+}
+
 func sortBlueprint(blueprint *models.EnvironmentBlueprint) {
 	if blueprint.Version == 0 {
 		blueprint.Version = 1
@@ -226,6 +273,9 @@ func sortBlueprint(blueprint *models.EnvironmentBlueprint) {
 	}
 	if blueprint.Variables == nil {
 		blueprint.Variables = make(map[string]string)
+	}
+	if blueprint.Pre == nil {
+		blueprint.Pre = []models.EnvironmentPreScript{}
 	}
 	sort.Slice(blueprint.Targets, func(i, j int) bool {
 		return blueprint.Targets[i].Ref < blueprint.Targets[j].Ref
@@ -270,6 +320,23 @@ func targetsNode(targets []models.EnvironmentTarget) *yamlv3.Node {
 			fields = append(fields, scalarNode("env"), stringMapNode(target.Env))
 		}
 		node.Content = append(node.Content, mappingNode(fields...))
+	}
+	return node
+}
+
+func preScriptsNode(scripts []models.EnvironmentPreScript) *yamlv3.Node {
+	node := &yamlv3.Node{Kind: yamlv3.SequenceNode}
+	for _, script := range scripts {
+		if strings.Contains(script.Ref, "\n") {
+			node.Content = append(node.Content, &yamlv3.Node{
+				Kind:  yamlv3.ScalarNode,
+				Tag:   "!!str",
+				Style: yamlv3.LiteralStyle,
+				Value: script.Ref,
+			})
+			continue
+		}
+		node.Content = append(node.Content, scalarNode(script.Ref))
 	}
 	return node
 }

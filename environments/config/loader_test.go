@@ -28,6 +28,12 @@ targets:
       PORT: "8080"
 variables:
   LOG_LEVEL: debug
+pre:
+  - api:serve
+  - api:scripts/bootstrap.sh
+  - /scripts/repo.sh
+  - |
+    echo inline
 `)
 
 	blueprint, err := envconfig.LoadBlueprint(repo, "local")
@@ -40,6 +46,12 @@ variables:
 	assert.Equal(t, "api:serve", blueprint.Targets[0].Ref)
 	assert.True(t, *blueprint.Targets[0].Reload)
 	assert.Equal(t, "8080", blueprint.Targets[0].Env["PORT"])
+	assert.Equal(t, []models.EnvironmentPreScript{
+		{Ref: "api:serve"},
+		{Ref: "api:scripts/bootstrap.sh"},
+		{Ref: "/scripts/repo.sh"},
+		{Ref: "echo inline\n"},
+	}, blueprint.Pre)
 }
 
 func TestLoadBlueprintUnknownFile(t *testing.T) {
@@ -137,6 +149,61 @@ targets:
 			_, err := envconfig.LoadBlueprint(repo, tt.name)
 
 			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.message)
+		})
+	}
+}
+
+func TestLoadBlueprintInvalidPreScript(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		message string
+	}{
+		{
+			name: "empty",
+			content: `
+name: empty
+targets:
+  - ref: api:serve
+pre:
+  - ""
+`,
+			message: "empty pre script",
+		},
+		{
+			name: "unqualified",
+			content: `
+name: unqualified
+targets:
+  - ref: api:serve
+pre:
+  - scripts/bootstrap.sh
+`,
+			message: "must be a target ref, bundle:path or /repo/path",
+		},
+		{
+			name: "unknown-bundle",
+			content: `
+name: unknown-bundle
+targets:
+  - ref: api:serve
+pre:
+  - missing:scripts/bootstrap.sh
+`,
+			message: "unknown bundle missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTestRepo(t)
+			writeBlueprint(t, repo.RepoRoot(), tt.name, tt.content)
+
+			_, err := envconfig.LoadBlueprint(repo, tt.name)
+
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, envconfig.ErrInvalidPreScript))
 			assert.Contains(t, err.Error(), tt.message)
 		})
 	}
@@ -240,6 +307,11 @@ func TestMarshalBlueprintDeterministicYAML(t *testing.T) {
 			{Ref: "ts-app:web", Reload: &reloadTrue},
 			{Ref: "go-app:serve", Reload: &reloadFalse, Env: map[string]string{"APP_PORT": "8080", "LOG_LEVEL": "debug"}},
 		},
+		Pre: []models.EnvironmentPreScript{
+			{Ref: "go-app:migrate"},
+			{Ref: "go-app:scripts/bootstrap.sh"},
+			{Ref: "echo inline\n"},
+		},
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: true,
 			Include: []string{"ts-app:mailhog", "go-app:postgres"},
@@ -256,6 +328,11 @@ name: local-stack
 live_reload:
     enabled: true
     debounce: 100ms
+pre:
+    - go-app:migrate
+    - go-app:scripts/bootstrap.sh
+    - |
+      echo inline
 targets:
     - ref: go-app:serve
       reload: false

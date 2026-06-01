@@ -19,7 +19,7 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"ts-app:web", "go-app:serve"},
+		Targets:        []string{"ts-app:web", "go-app:run"},
 		Dependencies:   true,
 		ReloadEnabled:  true,
 		NonInteractive: true,
@@ -28,7 +28,7 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:serve", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:run", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.Equal(t, []string{"go-app:postgres", "ts-app:mailhog"}, blueprint.DependencyPolicy.Include)
 }
 
@@ -44,9 +44,9 @@ func TestRunCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:serve"},
+		Targets:        []string{"go-app:run"},
 		ReloadEnabled:  true,
-		TargetReload:   map[string]bool{"missing:serve": false},
+		TargetReload:   map[string]bool{"missing:run": false},
 		NonInteractive: true,
 	})
 
@@ -58,21 +58,21 @@ func TestRunEditNonInteractiveAddsTarget(t *testing.T) {
 	repo := newTestRepo(t)
 	require.NoError(t, envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:serve"},
+		Targets:        []string{"go-app:run"},
 		ReloadEnabled:  true,
 		NonInteractive: true,
 	}))
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name:           "local-stack",
-		AddTargets:     []string{"python-app:serve"},
+		AddTargets:     []string{"python-app:run"},
 		NonInteractive: true,
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:serve", "python-app:serve"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:run", "python-app:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
@@ -80,13 +80,13 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:serve,ts-app:web\n\n\n\nn\n"),
+		In:   strings.NewReader("go-app:run,ts-app:web\n\n\n\nn\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:serve", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:run", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.True(t, blueprint.ReloadPolicy.Enabled)
 	assert.False(t, blueprint.DependencyPolicy.Enabled)
 }
@@ -95,20 +95,20 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 	repo := newTestRepo(t)
 	require.NoError(t, envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:serve"},
+		Targets:        []string{"go-app:run"},
 		ReloadEnabled:  true,
 		NonInteractive: true,
 	}))
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:serve,python-app:serve\n\n\n\n\n\n\n"),
+		In:   strings.NewReader("go-app:run,python-app:run\n\n\n\n\n\n\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:serve", "python-app:serve"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:run", "python-app:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func newTestRepo(t *testing.T) *rootconfig.Config {
@@ -131,7 +131,7 @@ dependencies:
   - name: `+dep+`
     image: postgres:16
 targets:
-  - name: serve
+  - name: run
     cmd: echo serve
   - name: web
     cmd: echo web

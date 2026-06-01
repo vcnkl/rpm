@@ -102,6 +102,83 @@ func TestUpReturnsRuntimeFailureWithoutWaitingForUnrelatedProcess(t *testing.T) 
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
+func TestUpRunsPreScriptsAfterDependenciesBeforeTargets(t *testing.T) {
+	order := []string{}
+	processes := &fakeProcessRunner{order: &order}
+	deps := &fakeDependencyRunner{order: &order}
+	plan := testPlan()
+	plan.PreScripts = []envstarlark.TargetProcess{
+		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
+		{Ref: "api:scripts/bootstrap.sh", Command: "/repo/api/scripts/bootstrap.sh", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"deps up",
+		"process api:migrate",
+		"process api:scripts/bootstrap.sh",
+		"process api:serve",
+	}, order)
+	assert.Equal(t, []string{"api:migrate", "api:scripts/bootstrap.sh", "api:serve"}, processes.startedRefs())
+}
+
+func TestUpStopsDependenciesWhenPreScriptFails(t *testing.T) {
+	order := []string{}
+	processes := &fakeProcessRunner{
+		order:    &order,
+		waitErrs: map[string]error{"api:migrate": assert.AnError},
+	}
+	deps := &fakeDependencyRunner{order: &order}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.PreScripts = []envstarlark.TargetProcess{
+		{Ref: "api:migrate", Command: "exit 1", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{"deps up", "process api:migrate", "deps down"}, order)
+	assert.Equal(t, []string{"api:migrate"}, processes.startedRefs())
+	assert.Equal(t, 1, deps.downCalls)
+	assert.Contains(t, events.types(), envruntime.EventEnvironmentStopped)
+}
+
+func TestNoDepsStillRunsPreScriptsBeforeTargets(t *testing.T) {
+	order := []string{}
+	processes := &fakeProcessRunner{order: &order}
+	deps := &fakeDependencyRunner{order: &order}
+	plan := testPlan()
+	plan.PreScripts = []envstarlark.TargetProcess{
+		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		NoDeps:           true,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"process api:migrate", "process api:serve"}, order)
+	assert.Zero(t, deps.upCalls)
+}
+
 func TestWatcherChangeRestartsAffectedProcessOnly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -213,6 +290,7 @@ type fakeProcessRunner struct {
 	block     bool
 	blockRefs map[string]bool
 	waitErrs  map[string]error
+	order     *[]string
 }
 
 func (r *fakeProcessRunner) Start(ctx context.Context, target envstarlark.TargetProcess, sink envruntime.EventSink) (envruntime.Process, error) {
@@ -221,6 +299,9 @@ func (r *fakeProcessRunner) Start(ctx context.Context, target envstarlark.Target
 	}
 	r.mu.Lock()
 	r.started = append(r.started, target)
+	if r.order != nil {
+		*r.order = append(*r.order, "process "+target.Ref)
+	}
 	if r.stopped == nil {
 		r.stopped = make(map[string]int)
 	}
@@ -277,15 +358,22 @@ func (p *fakeProcess) Stop(context.Context) error {
 type fakeDependencyRunner struct {
 	upCalls   int
 	downCalls int
+	order     *[]string
 }
 
 func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimePlan) error {
 	r.upCalls++
+	if r.order != nil {
+		*r.order = append(*r.order, "deps up")
+	}
 	return nil
 }
 
 func (r *fakeDependencyRunner) Down(context.Context, string, *envstarlark.RuntimePlan) error {
 	r.downCalls++
+	if r.order != nil {
+		*r.order = append(*r.order, "deps down")
+	}
 	return nil
 }
 

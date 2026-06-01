@@ -82,7 +82,7 @@ dependencies:
     image: redis:7
     mode: dedicated           # one container per selected target in this bundle
 targets:
-  - name: serve
+  - name: run
     cmd: go run .
 ```
 
@@ -123,8 +123,14 @@ name: local-stack
 live_reload:
   enabled: true
   debounce: 100ms
+pre:
+  - go-app:migrate
+  - go-app:scripts/bootstrap.sh
+  - /scripts/repo-bootstrap.sh
+  - |
+    echo "inline pre"
 targets:
-  - ref: go-app:serve
+  - ref: go-app:run
     reload: true
     env:
       APP_PORT: "8080"
@@ -140,9 +146,9 @@ variables:
   LOG_LEVEL: debug
 ```
 
-Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
+Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `pre` entries run after dependencies and before target processes; they can reference other `rpm.yml` targets, bundle/repo script paths, or inline YAML pipe commands. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
 
-`rpm env render <blueprint>` validates the blueprint, resolves repo/bundle/target config, and writes deterministic Starlark under `.rpm/cache/starlark/<blueprint>/env.star`. `rpm env up <blueprint>` runs the same validation and render pipeline, evaluates the generated Starlark runtime plan, starts dependency containers, starts target processes, and restarts affected target processes when watched files change. In interactive mode it opens the embedded React/Ink TUI; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
+`rpm env render <blueprint>` validates the blueprint, resolves repo/bundle/target config, and writes deterministic Starlark under `.rpm/cache/starlark/<blueprint>/env.star`. `rpm env up <blueprint>` runs the same validation and render pipeline, evaluates the generated Starlark runtime plan, starts dependency containers, runs `pre` scripts, starts target processes, and restarts affected target processes when watched files change. In interactive mode it opens the embedded React/Ink TUI; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
 
 `rpm env down <blueprint>` removes dependency containers and the environment network for that blueprint. It does not stop arbitrary external processes.
 
@@ -192,6 +198,7 @@ Composed in order (later overrides earlier):
 
 - Target commands use the resolved working directory from `config.working_dir`.
 - Target environments compose values in this order: host env, repo env, `REPO_ROOT`, `BUNDLE_ROOT`, bundle env, target env, blueprint variables, blueprint target env and configured dotenv files.
+- Stack `pre` target refs use the same target command, working directory, environment and dotenv behavior. Script path entries use the same path conventions: `/path` from `REPO_ROOT`, `bundle:path` from a bundle root, and current-bundle paths where a bundle context exists.
 - Watch roots default to the bundle root or the target `in` patterns, and ignore entries come from target config.
 - `--no-reload` disables watchers at runtime without mutating the committed blueprint.
 - `--no-deps` skips dependency containers while still running targets.

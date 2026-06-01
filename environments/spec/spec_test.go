@@ -94,6 +94,74 @@ targets:
 	assert.Equal(t, []string{filepath.Join(bundleRoot, ".env"), filepath.Join(bundleRoot, ".env.local")}, spec.ResolveDotenvFiles(repoRoot, bundle, target))
 }
 
+func TestResolvePreScriptsReuseTargetAndBundleContext(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+shell: /bin/sh
+env:
+  GLOBAL_VAR: global
+`), 0644))
+	bundleRoot := filepath.Join(repoRoot, "apps", "api")
+	require.NoError(t, os.MkdirAll(filepath.Join(bundleRoot, "scripts"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, ".env"), []byte("FROM_DOTENV=dotenv\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+env:
+  BUNDLE_VAR: bundle
+targets:
+  - name: migrate
+    env:
+      TARGET_VAR: target
+    cmd: echo migrate
+    config:
+      working_dir: cmd
+      dotenv:
+        enabled: true
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:      "local",
+		Variables: map[string]string{"STACK_VAR": "stack"},
+		Pre: []models.EnvironmentPreScript{
+			{Ref: "api:migrate"},
+			{Ref: "api:scripts/bootstrap.sh"},
+			{Ref: "/scripts/repo.sh"},
+			{Ref: "echo inline\n"},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	require.Len(t, resolved.PreScripts, 4)
+	assert.Equal(t, "api:migrate", resolved.PreScripts[0].Ref)
+	assert.Equal(t, "echo migrate", resolved.PreScripts[0].Command)
+	assert.Equal(t, filepath.Join(bundleRoot, "cmd"), resolved.PreScripts[0].WorkingDir)
+	targetEnv := envMap(resolved.PreScripts[0].Env)
+	assert.Equal(t, "global", targetEnv["GLOBAL_VAR"])
+	assert.Equal(t, repoRoot, targetEnv["REPO_ROOT"])
+	assert.Equal(t, bundleRoot, targetEnv["BUNDLE_ROOT"])
+	assert.Equal(t, "bundle", targetEnv["BUNDLE_VAR"])
+	assert.Equal(t, "target", targetEnv["TARGET_VAR"])
+	assert.Equal(t, "stack", targetEnv["STACK_VAR"])
+	assert.Equal(t, "dotenv", targetEnv["FROM_DOTENV"])
+
+	assert.Equal(t, "api:scripts/bootstrap.sh", resolved.PreScripts[1].Ref)
+	assert.Equal(t, bundleRoot, resolved.PreScripts[1].WorkingDir)
+	assert.Contains(t, resolved.PreScripts[1].Command, filepath.Join(bundleRoot, "scripts", "bootstrap.sh"))
+	bundleEnv := envMap(resolved.PreScripts[1].Env)
+	assert.Equal(t, "bundle", bundleEnv["BUNDLE_VAR"])
+	assert.Equal(t, "stack", bundleEnv["STACK_VAR"])
+
+	assert.Equal(t, "/scripts/repo.sh", resolved.PreScripts[2].Ref)
+	assert.Equal(t, repoRoot, resolved.PreScripts[2].WorkingDir)
+	assert.Contains(t, resolved.PreScripts[2].Command, filepath.Join(repoRoot, "scripts", "repo.sh"))
+
+	assert.Equal(t, "pre:inline:4", resolved.PreScripts[3].Ref)
+	assert.Equal(t, "echo inline\n", resolved.PreScripts[3].Command)
+	assert.Equal(t, repoRoot, resolved.PreScripts[3].WorkingDir)
+}
+
 func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))

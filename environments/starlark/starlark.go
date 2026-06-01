@@ -16,6 +16,7 @@ const stepBudget = 100000
 type RuntimePlan struct {
 	Environment  Environment
 	Dependencies []Dependency
+	PreScripts   []TargetProcess
 	Targets      []TargetProcess
 	Watches      []Watch
 	RunOrder     []string
@@ -85,6 +86,7 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 	predeclared := gostarlark.StringDict{
 		"rpm_environment": gostarlark.NewBuiltin("rpm_environment", rpmEnvironment),
 		"rpm_dependency":  gostarlark.NewBuiltin("rpm_dependency", rpmDependency),
+		"rpm_pre":         gostarlark.NewBuiltin("rpm_pre", rpmPre),
 		"rpm_target":      gostarlark.NewBuiltin("rpm_target", rpmTarget),
 		"rpm_watch":       gostarlark.NewBuiltin("rpm_watch", rpmWatch),
 		"rpm_run":         gostarlark.NewBuiltin("rpm_run", rpmRun),
@@ -101,6 +103,7 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 type planBuilder struct {
 	environment  Environment
 	dependencies []Dependency
+	preScripts   []TargetProcess
 	targets      []TargetProcess
 	watches      []Watch
 	runOrder     []string
@@ -116,6 +119,7 @@ func (b *planBuilder) plan() *RuntimePlan {
 	return &RuntimePlan{
 		Environment:  b.environment,
 		Dependencies: dependencies,
+		PreScripts:   append([]TargetProcess{}, b.preScripts...),
 		Targets:      targets,
 		Watches:      watches,
 		RunOrder:     append([]string{}, b.runOrder...),
@@ -195,6 +199,15 @@ func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlar
 	return gostarlark.None, nil
 }
 
+func rpmPre(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
+	target, err := targetProcess(fn, args, kwargs, false)
+	if err != nil {
+		return nil, err
+	}
+	builder(thread).preScripts = append(builder(thread).preScripts, target)
+	return gostarlark.None, nil
+}
+
 func rpmWatch(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
 	var target string
 	var reload, enabled bool
@@ -220,6 +233,26 @@ func rpmWatch(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark
 		Target: target, Roots: roots, Ignore: ignore, Reload: reload, Enabled: enabled,
 	})
 	return gostarlark.None, nil
+}
+
+func targetProcess(fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple, reload bool) (TargetProcess, error) {
+	var ref, command, workdir string
+	var envValue gostarlark.Value
+	if err := unpackKwargs(fn.Name(), args, kwargs,
+		"ref", &ref,
+		"command", &command,
+		"workdir", &workdir,
+		"env", &envValue,
+	); err != nil {
+		return TargetProcess{}, err
+	}
+	env, err := stringDict(envValue)
+	if err != nil {
+		return TargetProcess{}, err
+	}
+	return TargetProcess{
+		Ref: ref, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
+	}, nil
 }
 
 func rpmRun(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {

@@ -20,6 +20,7 @@ func TestInterpretGeneratedPlan(t *testing.T) {
 	src := []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {"LOG_LEVEL": "debug"})
 rpm_dependency(ref = "api:postgres", name = "postgres", image = "postgres:16", mode = "shared", env = {"POSTGRES_PASSWORD": "example"}, ports = ["5432:5432"], volumes = ["pg:/data"])
+rpm_pre(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {"A": "b"})
 rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {"A": "b"}, reload = True)
 rpm_watch(target = "api:serve", roots = ["/repo/api"], ignore = ["bin/**"], reload = True, enabled = True)
 rpm_run(order = ["api:postgres", "api:serve"])
@@ -32,6 +33,9 @@ rpm_run(order = ["api:postgres", "api:serve"])
 	assert.Equal(t, "debug", plan.Environment.Variables["LOG_LEVEL"])
 	assert.Equal(t, "api:postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"5432:5432"}, plan.Dependencies[0].Ports)
+	assert.Equal(t, "api:migrate", plan.PreScripts[0].Ref)
+	assert.Equal(t, "go run migrations", plan.PreScripts[0].Command)
+	assert.Equal(t, "/repo/api", plan.PreScripts[0].WorkingDir)
 	assert.Equal(t, "api:serve", plan.Targets[0].Ref)
 	assert.Equal(t, "/repo/api", plan.Targets[0].WorkingDir)
 	assert.True(t, plan.Targets[0].Reload)
@@ -49,6 +53,11 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 		Targets: []models.EnvironmentTarget{
 			{Ref: "api:serve", Env: map[string]string{"APP_PORT": "8080"}},
 		},
+		Pre: []models.EnvironmentPreScript{
+			{Ref: "api:serve"},
+			{Ref: "api:scripts/bootstrap.sh"},
+			{Ref: "echo inline\n"},
+		},
 		DependencyPolicy: models.DependencyPolicy{Enabled: true},
 		ReloadPolicy:     models.ReloadPolicy{Enabled: true, Debounce: "100ms"},
 	}
@@ -62,6 +71,7 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "local", plan.Environment.Name)
 	assert.Equal(t, "api:postgres", plan.Dependencies[0].Ref)
+	assert.Equal(t, []string{"api:serve", "api:scripts/bootstrap.sh", "pre:inline:3"}, []string{plan.PreScripts[0].Ref, plan.PreScripts[1].Ref, plan.PreScripts[2].Ref})
 	assert.Equal(t, "api:serve", plan.Targets[0].Ref)
 	assert.Equal(t, "8080", plan.Targets[0].Env["APP_PORT"])
 	assert.Equal(t, filepath.Join(repo.RepoRoot(), "api"), plan.Targets[0].WorkingDir)

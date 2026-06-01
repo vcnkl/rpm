@@ -27,7 +27,12 @@ targets:
     config:
       working_dir: local
 
-  - name: serve
+  - name: prepare
+    cmd: echo "PRE_TARGET=$BUNDLE_ROOT"
+    config:
+      working_dir: local
+
+  - name: run
     deps:
       - ":app_build"
     cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR"

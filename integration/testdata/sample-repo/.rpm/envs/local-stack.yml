@@ -3,14 +3,19 @@ name: local-stack
 live_reload:
     enabled: true
     debounce: 100ms
+pre:
+    - go-app:prepare
+    - go-app:scripts/pre.sh
+    - |
+      echo "PRE_INLINE=$REPO_ROOT"
 targets:
-    - ref: go-app:serve
+    - ref: go-app:run
       reload: true
       env:
         APP_PORT: "8080"
     - ref: ts-app:web
       reload: true
-    - ref: python-app:serve
+    - ref: python-app:run
       reload: false
 dependencies:
     enabled: true

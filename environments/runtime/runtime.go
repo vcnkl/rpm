@@ -117,6 +117,16 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 		}
 	}
 
+	for _, pre := range plan.PreScripts {
+		if err := r.runPreScript(ctx, pre); err != nil {
+			if startedDeps {
+				_ = r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan)
+			}
+			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
+			return err
+		}
+	}
+
 	for _, ref := range targetOrder(plan) {
 		target, ok := targetByRef(plan, ref)
 		if !ok {
@@ -312,6 +322,25 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	}()
 	r.opts.EventSink.Emit(Event{Type: EventProcessStarted, Ref: target.Ref})
 	return nil
+}
+
+func (r *Runner) runPreScript(ctx context.Context, target envstarlark.TargetProcess) error {
+	if r.opts.ProcessRunner == nil {
+		return fmt.Errorf("process runner is required")
+	}
+	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
+	if err != nil {
+		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
+		return err
+	}
+	r.opts.EventSink.Emit(Event{Type: EventProcessStarted, Ref: target.Ref})
+	err = process.Wait()
+	event := Event{Type: EventProcessExited, Ref: target.Ref}
+	if err != nil {
+		event.Error = err.Error()
+	}
+	r.opts.EventSink.Emit(event)
+	return err
 }
 
 func (r *Runner) reloadTarget(ctx context.Context, plan *envstarlark.RuntimePlan, ref string, path string) {

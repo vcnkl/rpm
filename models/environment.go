@@ -9,10 +9,15 @@ type EnvironmentBlueprint struct {
 	Version          int
 	Name             string
 	Variables        map[string]string
+	Pre              []EnvironmentPreScript
 	Targets          []EnvironmentTarget
 	Dependencies     []EnvironmentDependency
 	DependencyPolicy DependencyPolicy
 	ReloadPolicy     ReloadPolicy
+}
+
+type EnvironmentPreScript struct {
+	Ref string
 }
 
 type EnvironmentTarget struct {

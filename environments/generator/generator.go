@@ -45,6 +45,18 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 		buf.WriteByte('\n')
 	}
 
+	for _, pre := range env.PreScripts {
+		writeCall(&buf, "rpm_pre", []field{
+			{name: "ref", value: quote(pre.Ref)},
+			{name: "command", value: quote(pre.Command)},
+			{name: "workdir", value: quote(pre.WorkingDir)},
+			{name: "env", value: envDict(pre.Env)},
+		})
+	}
+	if len(env.PreScripts) > 0 {
+		buf.WriteByte('\n')
+	}
+
 	targets := append([]spec.Target{}, env.Targets...)
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].Ref < targets[j].Ref
