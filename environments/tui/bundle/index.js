@@ -1370,7 +1370,7 @@ var require_react_development = __commonJS({
           }
           return dispatcher.useContext(Context);
         }
-        function useState2(initialState2) {
+        function useState3(initialState2) {
           var dispatcher = resolveDispatcher();
           return dispatcher.useState(initialState2);
         }
@@ -2173,7 +2173,7 @@ var require_react_development = __commonJS({
         exports.useMemo = useMemo4;
         exports.useReducer = useReducer2;
         exports.useRef = useRef;
-        exports.useState = useState2;
+        exports.useState = useState3;
         exports.useSyncExternalStore = useSyncExternalStore;
         exports.useTransition = useTransition;
         exports.version = ReactVersion;
@@ -26990,9 +26990,9 @@ var require_onetime = __commonJS({
   }
 });
 
-// node_modules/escape-string-regexp/index.js
+// node_modules/stack-utils/node_modules/escape-string-regexp/index.js
 var require_escape_string_regexp = __commonJS({
-  "node_modules/escape-string-regexp/index.js"(exports, module) {
+  "node_modules/stack-utils/node_modules/escape-string-regexp/index.js"(exports, module) {
     "use strict";
     var matchOperatorsRegex = /[|\\{}()[\]^$+*?.-]/g;
     module.exports = (string) => {
@@ -30678,7 +30678,7 @@ function isFullwidthCodePoint(codePoint) {
   131072 <= codePoint && codePoint <= 262141);
 }
 
-// node_modules/cli-truncate/node_modules/slice-ansi/index.js
+// node_modules/slice-ansi/index.js
 var astralRegex = /^[\uD800-\uDBFF][\uDC00-\uDFFF]$/;
 var ESCAPES2 = [
   "\x1B",
@@ -32136,7 +32136,7 @@ var renderNodeToOutput = (node, output, options) => {
 };
 var render_node_to_output_default = renderNodeToOutput;
 
-// node_modules/slice-ansi/node_modules/is-fullwidth-code-point/index.js
+// node_modules/ink/node_modules/is-fullwidth-code-point/index.js
 function isFullwidthCodePoint2(codePoint) {
   if (!Number.isInteger(codePoint)) {
     return false;
@@ -32144,7 +32144,7 @@ function isFullwidthCodePoint2(codePoint) {
   return isFullWidth(codePoint) || isWide(codePoint);
 }
 
-// node_modules/slice-ansi/index.js
+// node_modules/ink/node_modules/slice-ansi/index.js
 var ESCAPES3 = /* @__PURE__ */ new Set([27, 155]);
 var CODE_POINT_0 = "0".codePointAt(0);
 var CODE_POINT_9 = "9".codePointAt(0);
@@ -33802,36 +33802,84 @@ var import_react21 = __toESM(require_react(), 1);
 
 // src/state.ts
 var maxLines = 200;
+var statusOrder = {
+  failed: 0,
+  reloading: 1,
+  starting: 2,
+  running: 3,
+  exited: 4,
+  stopped: 5
+};
 function initialState(blueprint = "environment") {
   return { blueprint, selected: 0, showDependencies: true, units: [] };
 }
 function reduceEvent(state, event) {
+  let next;
   switch (event.type) {
     case "process_started":
-      return upsertUnit(state, event.ref, "target", "running");
+      next = upsertUnit(state, event.ref, "target", "running");
+      break;
     case "process_output":
-      return appendOutput(upsertUnit(state, event.ref, "target", "running"), event.ref, event.line ?? "");
+      next = appendOutput(upsertUnit(state, event.ref, "target", "running"), event.ref, event.line ?? "");
+      break;
     case "process_exited":
-      return upsertUnit(state, event.ref, "target", event.error ? "failed" : "exited");
+      next = upsertUnit(state, event.ref, "target", event.error ? "failed" : "exited");
+      break;
     case "dependency_started":
-      return upsertUnit(state, event.ref, "dependency", "running");
+      next = upsertUnit(state, event.ref, "dependency", "running");
+      break;
     case "dependency_failed":
-      return upsertUnit(state, event.ref ?? "dependencies", "dependency", "failed");
+      next = upsertUnit(state, event.ref ?? "dependencies", "dependency", "failed");
+      break;
     case "reload_started":
-      return upsertUnit(state, event.ref, "target", "reloading");
+      next = upsertUnit(state, event.ref, "target", "reloading");
+      break;
     case "reload_completed":
-      return upsertUnit(state, event.ref, "target", event.error ? "failed" : "running");
+      next = upsertUnit(state, event.ref, "target", event.error ? "failed" : "running");
+      break;
     case "environment_stopped":
-      return { ...state, units: state.units.map((unit) => ({ ...unit, status: unit.status === "failed" ? "failed" : "stopped" })) };
+      next = {
+        ...state,
+        units: state.units.map((unit) => ({ ...unit, status: unit.status === "failed" ? "failed" : "stopped" }))
+      };
+      break;
     default:
       return state;
   }
+  return clampSelection(next);
 }
 function orderUnits(units, showDependencies = true) {
   return units.filter((unit) => showDependencies || unit.kind !== "dependency").slice().sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "dependency" ? -1 : 1;
+    if (statusOrder[a.status] !== statusOrder[b.status]) return statusOrder[a.status] - statusOrder[b.status];
     return a.ref.localeCompare(b.ref);
   });
+}
+function summarizeUnits(units) {
+  return units.reduce(
+    (summary, unit) => {
+      summary.total += 1;
+      if (unit.kind === "dependency") summary.dependencies += 1;
+      if (unit.kind === "target") summary.targets += 1;
+      if (unit.status === "running") summary.running += 1;
+      if (unit.status === "reloading") summary.reloading += 1;
+      if (unit.status === "failed") summary.failed += 1;
+      if (unit.status === "stopped") summary.stopped += 1;
+      return summary;
+    },
+    { total: 0, dependencies: 0, targets: 0, running: 0, reloading: 0, failed: 0, stopped: 0 }
+  );
+}
+function clampSelection(state) {
+  const visible = orderUnits(state.units, state.showDependencies);
+  const selected = Math.max(0, Math.min(visible.length - 1, state.selected));
+  return selected === state.selected ? state : { ...state, selected };
+}
+function visibleWindow(items, selected, height) {
+  if (height <= 0 || items.length === 0) return { start: 0, rows: [] };
+  const bounded = Math.max(0, Math.min(items.length - 1, selected));
+  const start = Math.max(0, Math.min(bounded - Math.floor(height / 2), items.length - height));
+  return { start, rows: items.slice(start, start + height) };
 }
 function actionForKey(input, key) {
   if (key.upArrow || input === "k") return { type: "select", delta: -1 };
@@ -33868,20 +33916,26 @@ import fs2 from "node:fs";
 import process13 from "node:process";
 function reducer(state, action) {
   if (action.type === "event") return reduceEvent(state, action.event);
-  if (action.type === "toggle_dependencies") return { ...state, showDependencies: !state.showDependencies, selected: 0 };
+  if (action.type === "toggle_dependencies")
+    return clampSelection({ ...state, showDependencies: !state.showDependencies, selected: 0 });
   const visible = orderUnits(state.units, state.showDependencies);
   const next = Math.max(0, Math.min(visible.length - 1, state.selected + action.delta));
   return { ...state, selected: next };
 }
 function App2() {
   const [state, dispatch] = (0, import_react22.useReducer)(reducer, initialState(process13.env.RPM_ENV_BLUEPRINT ?? "environment"));
+  const viewport = useTerminalSize();
   const visible = (0, import_react22.useMemo)(() => orderUnits(state.units, state.showDependencies), [state.units, state.showDependencies]);
+  const summary = (0, import_react22.useMemo)(() => summarizeUnits(state.units), [state.units]);
+  const bodyHeight = Math.max(4, viewport.rows - 4);
+  const listRows = Math.max(1, bodyHeight - 2);
+  const windowed = visibleWindow(visible, state.selected, listRows);
   const selected = visible[state.selected];
   (0, import_react22.useEffect)(() => {
     const eventStream = fs2.createReadStream("/dev/fd/3", { encoding: "utf8" });
     let buffer = "";
     const onData = (chunk) => {
-      buffer += chunk;
+      buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       for (const line of lines) {
@@ -33906,30 +33960,124 @@ function App2() {
     if (action.type === "restart_all") send({ type: "restart_all" });
     if (action.type === "quit") send({ type: "quit" });
   });
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { flexDirection: "column", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Box_default, { width: "35%", flexDirection: "column", borderStyle: "single", paddingX: 1, children: visible.map((unit, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { inverse: index === state.selected, children: [
-        unit.kind === "dependency" ? "dep" : "target",
-        " ",
-        unit.status,
-        " ",
-        unit.ref
-      ] }, unit.ref)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: "65%", flexDirection: "column", borderStyle: "single", paddingX: 1, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { children: selected ? `${selected.ref} ${selected.status}` : "No runtime units yet" }),
-        (selected?.output ?? []).slice(-20).map((line, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { children: line }, index))
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: viewport.columns, height: viewport.rows, flexDirection: "column", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: viewport.columns, justifyContent: "space-between", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { bold: true, color: "cyan", children: [
+        "rpm env ",
+        state.blueprint
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { color: summary.failed > 0 ? "red" : summary.reloading > 0 ? "yellow" : "green", children: [
+        summary.running,
+        " running ",
+        summary.reloading,
+        " reloading ",
+        summary.failed,
+        " failed"
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Box_default, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { children: [
-      state.blueprint,
-      " reload:",
-      " ",
-      state.units.some((unit) => unit.status === "reloading") ? "active" : "idle",
-      " deps:",
-      " ",
-      state.showDependencies ? "shown" : "hidden"
-    ] }) })
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: viewport.columns, justifyContent: "space-between", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { color: "gray", children: [
+        "targets ",
+        summary.targets,
+        " deps ",
+        summary.dependencies,
+        " ",
+        state.showDependencies ? "shown" : "hidden"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { color: "gray", children: "up/down move r restart R restart all d deps q quit" })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: viewport.columns, height: bodyHeight, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        Box_default,
+        {
+          width: Math.max(30, Math.floor(viewport.columns * 0.42)),
+          height: bodyHeight,
+          flexDirection: "column",
+          borderStyle: "single",
+          paddingX: 1,
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { bold: true, color: "cyan", children: [
+              "Units",
+              " ",
+              visible.length > listRows ? `${windowed.start + 1}-${windowed.start + windowed.rows.length}/${visible.length}` : `${visible.length}`
+            ] }),
+            windowed.rows.map((unit, index) => {
+              const absolute = windowed.start + index;
+              return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UnitRow, { unit, selected: absolute === state.selected }, unit.ref);
+            })
+          ]
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { flexGrow: 1, height: bodyHeight, flexDirection: "column", borderStyle: "single", paddingX: 1, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { justifyContent: "space-between", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { bold: true, color: selected ? statusColor(selected.status) : "gray", children: selected ? selected.ref : "No runtime units yet" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { color: selected ? statusColor(selected.status) : "gray", children: selected?.status ?? "idle" })
+        ] }),
+        (selected?.output ?? []).slice(-(bodyHeight - 3)).map((line, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { wrap: "truncate", children: line }, index))
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Box_default, { width: viewport.columns, justifyContent: "space-between", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { color: selected ? statusColor(selected.status) : "gray", children: selected ? `${selected.kind} ${selected.status}` : "waiting for runtime events" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Text, { color: "gray", children: "press q to stop" })
+    ] })
   ] });
+}
+function UnitRow({ unit, selected }) {
+  const kind = unit.kind === "dependency" ? "dep" : "target";
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Text, { inverse: selected, color: selected ? void 0 : statusColor(unit.status), wrap: "truncate", children: [
+    selected ? ">" : " ",
+    " ",
+    statusSymbol(unit.status),
+    " ",
+    kind.padEnd(6),
+    " ",
+    unit.ref
+  ] });
+}
+function statusColor(status) {
+  switch (status) {
+    case "failed":
+      return "red";
+    case "reloading":
+    case "starting":
+      return "yellow";
+    case "running":
+      return "green";
+    case "exited":
+    case "stopped":
+      return "gray";
+  }
+}
+function statusSymbol(status) {
+  switch (status) {
+    case "failed":
+      return "!";
+    case "reloading":
+      return "~";
+    case "starting":
+      return "+";
+    case "running":
+      return "*";
+    case "exited":
+      return "o";
+    case "stopped":
+      return "-";
+  }
+}
+function useTerminalSize() {
+  const read = () => ({
+    columns: Math.max(60, process13.stderr.columns ?? 100),
+    rows: Math.max(12, process13.stderr.rows ?? 30)
+  });
+  const [size, setSize] = (0, import_react22.useState)(read);
+  (0, import_react22.useEffect)(() => {
+    const onResize = () => setSize(read());
+    process13.stderr.on("resize", onResize);
+    return () => {
+      process13.stderr.off("resize", onResize);
+    };
+  }, []);
+  return size;
 }
 function send(action) {
   process13.stdout.write(JSON.stringify(action) + "\n");

@@ -1,19 +1,28 @@
 {
-  "name": "rpm-env-tui",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "esbuild src/app.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=../../environments/tui/bundle/index.js --banner:js='#!/usr/bin/env node'",
-    "test": "node --test src/*.test.ts"
-  },
-  "dependencies": {
-    "ink": "^5.2.1",
-    "react": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.15.29",
-    "@types/react": "^18.3.23",
-    "esbuild": "^0.25.5",
-    "typescript": "^5.8.3"
-  }
+	"name": "rpm-env-tui",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "esbuild src/app.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=../../environments/tui/bundle/index.js --banner:js='#!/usr/bin/env node'",
+		"format": "prettier --write .",
+		"lint": "eslint .",
+		"test": "node --test src/*.test.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"ink": "^5.2.1",
+		"react": "^18.3.1"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^22.15.29",
+		"@types/react": "^18.3.23",
+		"esbuild": "^0.25.5",
+		"eslint": "^10.4.1",
+		"globals": "^17.6.0",
+		"prettier": "^3.8.3",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "^8.60.0"
+	},
+	"packageManager": "yarn@4.15.0+sha512.07ec708ac11e2eaa4ea2b04cfbb272812f7e74a753f1595eaef4486c663a98306a30cca3e6fc40f7a0b168dcfb3a2490b6a5e0501e20fb69cc36f563dd161c53"
 }

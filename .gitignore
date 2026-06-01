@@ -1,6 +1,7 @@
 # Builds
 .build/
 node_modules/
+**/.yarn/install-state.gz
 
 # Temporary files
 tmp/
