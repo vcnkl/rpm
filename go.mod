@@ -15,6 +15,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/urfave/cli/v2 v2.27.1
+	go.starlark.net v0.0.0-20260324133313-ffb3f39dd27a
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -6,6 +6,9 @@ import (
 
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	envcreate "github.com/vcnkl/rpm/environments/create"
+	"github.com/vcnkl/rpm/environments/generator"
+	"github.com/vcnkl/rpm/environments/spec"
+	"github.com/vcnkl/rpm/models"
 
 	"github.com/urfave/cli/v2"
 )
@@ -58,7 +61,10 @@ func envCreateCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
-			name, trailingStrings, trailingBools := parseTrailingFlags(ctx.Args().Slice())
+			name, trailingStrings, trailingBools, err := parseTrailingFlags(ctx.Args().Slice())
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
 			cfg := loadConfig(ctx)
 			reload := true
 			if ctx.Bool("no-reload") || trailingBools["no-reload"] {
@@ -138,7 +144,10 @@ func envEditCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
-			name, trailingStrings, trailingBools := parseTrailingFlags(ctx.Args().Slice())
+			name, trailingStrings, trailingBools, err := parseTrailingFlags(ctx.Args().Slice())
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
 			if name == "" {
 				return cli.Exit("error: blueprint argument required", 1)
 			}
@@ -197,9 +206,10 @@ func envValidateCmd() *cli.Command {
 
 func envRenderCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "render",
-		Usage:     "Render an environment blueprint",
-		ArgsUsage: "<blueprint>",
+		Name:                   "render",
+		Usage:                  "Render an environment blueprint",
+		ArgsUsage:              "<blueprint>",
+		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "out",
@@ -207,19 +217,33 @@ func envRenderCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
-			if ctx.Args().Len() == 0 {
+			name, trailingStrings, _, err := parseTrailingFlags(ctx.Args().Slice())
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			if name == "" {
 				return cli.Exit("error: blueprint argument required", 1)
 			}
-			return envPlaceholder("render")
+			out := ctx.String("out")
+			if out == "" && len(trailingStrings["out"]) > 0 {
+				out = trailingStrings["out"][len(trailingStrings["out"])-1]
+			}
+			path, err := renderEnvironment(ctx, name, out, renderOptions{})
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			fmt.Fprintln(ctx.App.Writer, path)
+			return nil
 		},
 	}
 }
 
 func envUpCmd() *cli.Command {
 	return &cli.Command{
-		Name:      "up",
-		Usage:     "Validate, render, and run an environment blueprint",
-		ArgsUsage: "<blueprint>",
+		Name:                   "up",
+		Usage:                  "Validate, render, and run an environment blueprint",
+		ArgsUsage:              "<blueprint>",
+		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "non-interactive",
@@ -239,8 +263,23 @@ func envUpCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
-			if ctx.Args().Len() == 0 {
+			name, _, trailingBools, err := parseTrailingFlags(ctx.Args().Slice())
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			if name == "" {
 				return cli.Exit("error: blueprint argument required", 1)
+			}
+			if ctx.Bool("render-only") || trailingBools["render-only"] {
+				path, err := renderEnvironment(ctx, name, "", renderOptions{
+					NoReload: ctx.Bool("no-reload") || trailingBools["no-reload"],
+					NoDeps:   ctx.Bool("no-deps") || trailingBools["no-deps"],
+				})
+				if err != nil {
+					return cli.Exit("error: "+err.Error(), 1)
+				}
+				fmt.Fprintln(ctx.App.Writer, path)
+				return nil
 			}
 			return envPlaceholder("up")
 		},
@@ -265,6 +304,63 @@ func envPlaceholder(action string) error {
 	return cli.Exit("error: env "+action+" is not implemented until the environment runtime is added", 1)
 }
 
+type renderOptions struct {
+	NoReload bool
+	NoDeps   bool
+}
+
+func renderEnvironment(ctx *cli.Context, name string, out string, opts renderOptions) (string, error) {
+	cfg := loadConfig(ctx)
+	blueprint, err := envconfig.LoadBlueprint(cfg, name)
+	if err != nil {
+		return "", err
+	}
+	blueprint = blueprintWithRenderOptions(blueprint, opts)
+	resolved, err := spec.Resolve(cfg, blueprint)
+	if err != nil {
+		return "", err
+	}
+	return generator.Write(cfg, resolved, out)
+}
+
+func blueprintWithRenderOptions(blueprint *models.EnvironmentBlueprint, opts renderOptions) *models.EnvironmentBlueprint {
+	next := *blueprint
+	next.Variables = copyStringMap(blueprint.Variables)
+	next.Targets = append([]models.EnvironmentTarget{}, blueprint.Targets...)
+	for i := range next.Targets {
+		next.Targets[i].Env = copyStringMap(next.Targets[i].Env)
+	}
+	next.DependencyPolicy = models.DependencyPolicy{
+		Enabled: blueprint.DependencyPolicy.Enabled,
+		Include: append([]string{}, blueprint.DependencyPolicy.Include...),
+		Exclude: append([]string{}, blueprint.DependencyPolicy.Exclude...),
+	}
+	if opts.NoDeps {
+		next.DependencyPolicy.Enabled = false
+		next.DependencyPolicy.Include = []string{}
+		next.DependencyPolicy.Exclude = []string{}
+	}
+	if opts.NoReload {
+		next.ReloadPolicy.Enabled = false
+		for i := range next.Targets {
+			value := false
+			next.Targets[i].Reload = &value
+		}
+	}
+	return &next
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func parseBoolAssignments(values []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	for _, value := range values {
@@ -287,7 +383,7 @@ func parseBoolAssignments(values []string) (map[string]bool, error) {
 	return result, nil
 }
 
-func parseTrailingFlags(args []string) (string, map[string][]string, map[string]bool) {
+func parseTrailingFlags(args []string) (string, map[string][]string, map[string]bool, error) {
 	values := make(map[string][]string)
 	bools := make(map[string]bool)
 	name := ""
@@ -305,14 +401,15 @@ func parseTrailingFlags(args []string) (string, map[string][]string, map[string]
 			continue
 		}
 		switch flag {
-		case "target", "target-reload", "add-target", "remove-target", "include-dep", "exclude-dep":
-			if i+1 < len(args) {
-				i++
-				values[flag] = append(values[flag], args[i])
+		case "target", "target-reload", "add-target", "remove-target", "include-dep", "exclude-dep", "out":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return "", nil, nil, fmt.Errorf("--%s requires a value", flag)
 			}
+			i++
+			values[flag] = append(values[flag], args[i])
 		default:
 			bools[flag] = true
 		}
 	}
-	return name, values, bools
+	return name, values, bools, nil
 }

@@ -28,12 +28,14 @@ type Bundle struct {
 }
 
 type Target struct {
-	Ref        string
-	Command    string
-	WorkingDir string
-	Env        []EnvVar
-	Reload     bool
-	Dotenv     Dotenv
+	Ref         string
+	Command     string
+	WorkingDir  string
+	Env         []EnvVar
+	ExplicitEnv []EnvVar
+	Reload      bool
+	Watch       Watch
+	Dotenv      Dotenv
 }
 
 type Dependency struct {
@@ -54,6 +56,13 @@ type EnvVar struct {
 type Dotenv struct {
 	Enabled bool
 	Files   []string
+}
+
+type Watch struct {
+	Roots   []string
+	Ignore  []string
+	Reload  bool
+	Enabled bool
 }
 
 type RuntimeUnit struct {
@@ -95,11 +104,18 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			reload = *bpTarget.Reload
 		}
 		resolved.Targets = append(resolved.Targets, Target{
-			Ref:        target.ID(),
-			Command:    target.Cmd,
-			WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
-			Env:        ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
-			Reload:     reload,
+			Ref:         target.ID(),
+			Command:     target.Cmd,
+			WorkingDir:  ResolveWorkingDir(repo.RepoRoot(), target),
+			Env:         ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
+			ExplicitEnv: ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget),
+			Reload:      reload,
+			Watch: Watch{
+				Roots:   ResolveWatchRoots(repo.RepoRoot(), bundle, target),
+				Ignore:  sortedStrings(target.Config.Ignore),
+				Reload:  reload,
+				Enabled: reload,
+			},
 			Dotenv: Dotenv{
 				Enabled: target.Config.Dotenv.Enabled,
 				Files:   ResolveDotenvFiles(repo.RepoRoot(), bundle, target),
@@ -138,13 +154,7 @@ func ResolveWorkingDir(repoRoot string, target *models.Target) string {
 
 func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
 	env := os.Environ()
-	env = appendEnvMap(env, repo.Repo().Env)
-	env = append(env, "REPO_ROOT="+repo.RepoRoot())
-	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
-	env = appendEnvMap(env, bundle.Env)
-	env = appendEnvMap(env, target.Env)
-	env = appendEnvMap(env, blueprint.Variables)
-	env = appendEnvMap(env, bpTarget.Env)
+	env = appendExplicitTargetEnv(env, repo, bundle, target, blueprint, bpTarget)
 
 	if target.Config.Dotenv.Enabled {
 		for _, filePath := range ResolveDotenvFiles(repo.RepoRoot(), bundle, target) {
@@ -156,6 +166,43 @@ func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *mo
 	}
 
 	return mergeEnvVars(env)
+}
+
+func ResolveGeneratedTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
+	env := appendExplicitTargetEnv(nil, repo, bundle, target, blueprint, bpTarget)
+	if target.Config.Dotenv.Enabled {
+		for _, filePath := range ResolveDotenvFiles(repo.RepoRoot(), bundle, target) {
+			fileVars, err := rpmexec.LoadDotenv(filePath)
+			if err == nil {
+				env = appendEnvMap(env, fileVars)
+			}
+		}
+	}
+	return mergeEnvVars(env)
+}
+
+func ResolveWatchRoots(repoRoot string, bundle *models.Bundle, target *models.Target) []string {
+	bundleRoot := filepath.Join(repoRoot, bundle.Path)
+	roots := make([]string, 0, len(target.In)+1)
+	if len(target.In) == 0 {
+		roots = append(roots, bundleRoot)
+	} else {
+		for _, input := range target.In {
+			roots = append(roots, filepath.Join(bundleRoot, input))
+		}
+	}
+	return sortedStrings(roots)
+}
+
+func appendExplicitTargetEnv(env []string, repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []string {
+	env = appendEnvMap(env, repo.Repo().Env)
+	env = append(env, "REPO_ROOT="+repo.RepoRoot())
+	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
+	env = appendEnvMap(env, bundle.Env)
+	env = appendEnvMap(env, target.Env)
+	env = appendEnvMap(env, blueprint.Variables)
+	env = appendEnvMap(env, bpTarget.Env)
+	return env
 }
 
 func ResolveDotenvFiles(repoRoot string, bundle *models.Bundle, target *models.Target) []string {
@@ -247,5 +294,11 @@ func envVars(values map[string]string) []EnvVar {
 	for _, key := range keys {
 		result = append(result, EnvVar{Name: key, Value: values[key]})
 	}
+	return result
+}
+
+func sortedStrings(values []string) []string {
+	result := append([]string{}, values...)
+	sort.Strings(result)
 	return result
 }

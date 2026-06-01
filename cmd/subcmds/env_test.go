@@ -2,8 +2,10 @@ package subcmds_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +16,7 @@ import (
 	"github.com/vcnkl/rpm/cmd/subcmds"
 	rootconfig "github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
+	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
 func TestEnvHelpListsSubcommands(t *testing.T) {
@@ -93,6 +96,76 @@ func TestEnvCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown blueprint target ref")
+}
+
+func TestEnvRenderWritesCachePathAndPrintsPath(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	app.Writer = out
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:serve"}))
+	out.Reset()
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "render", "local-stack"})
+
+	require.NoError(t, err)
+	expected := filepath.Join(repo.RepoRoot(), ".rpm", "cache", "starlark", "local-stack", "env.star")
+	assert.Equal(t, expected, strings.TrimSpace(out.String()))
+	assert.FileExists(t, expected)
+}
+
+func TestEnvRenderHonorsOutAfterBlueprint(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	app.Writer = out
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:serve"}))
+	out.Reset()
+	renderedPath := filepath.Join(t.TempDir(), "local-stack.star")
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "render", "local-stack", "--out", renderedPath})
+
+	require.NoError(t, err)
+	assert.Equal(t, renderedPath, strings.TrimSpace(out.String()))
+	assert.FileExists(t, renderedPath)
+}
+
+func TestEnvRenderRejectsOutWithoutValueAfterBlueprint(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	defer captureCliExit(t)()
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "render", "local-stack", "--out"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--out requires a value")
+}
+
+func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	app.Writer = out
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:serve", "--target-reload", "go-app:serve=true"}))
+	before, err := os.ReadFile(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack.yml"))
+	require.NoError(t, err)
+	out.Reset()
+
+	err = app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--render-only", "--no-reload"})
+
+	require.NoError(t, err)
+	after, err := os.ReadFile(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after))
+
+	rendered := strings.TrimSpace(out.String())
+	data, err := os.ReadFile(rendered)
+	require.NoError(t, err)
+	plan, err := envstarlark.InterpretSource(context.Background(), "local-stack", rendered, data)
+	require.NoError(t, err)
+	assert.False(t, plan.Environment.LiveReload.Enabled)
+	assert.False(t, plan.Targets[0].Reload)
+	assert.False(t, plan.Watches[0].Enabled)
 }
 
 func newCommandTestRepo(t *testing.T) *rootconfig.Config {
