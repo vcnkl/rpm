@@ -2,14 +2,14 @@
 
 Language-agnostic build orchestration and local environment runtime for monorepos.
 
-## Current Command Model
+## Command Model
 
-RPM now has a hard split between build/test/run orchestration and environment runtime orchestration:
+RPM has a clear split between build/test/run orchestration and environment runtime orchestration:
 
-- `rpm build` builds filesystem-output targets only. The former Docker flag for `rpm build`, Docker build backend config, image target conventions and Docker pseudo-output entries are removed.
-- `rpm dev` is removed. Use `rpm env create`, `rpm env render` and `rpm env up` for local environment workflows.
-- `_dev` target suffixes are ordinary target names and are no longer selected specially.
-- Environment containers are still supported as runtime dependencies under bundle `dependencies`; this is separate from the removed Docker build backend.
+- `rpm build` builds filesystem-output targets only.
+- `rpm env create`, `rpm env render` and `rpm env up` handle local environment workflows.
+- Target suffixes are ordinary target name text; environment membership comes from explicit blueprint target refs.
+- Environment containers are runtime dependencies declared under bundle `dependencies`.
 
 ## Installation
 
@@ -191,7 +191,7 @@ Composed in order (later overrides earlier):
 ## Environment Runtime
 
 - Target commands use the resolved working directory from `config.working_dir`.
-- Target environments preserve the old `dev` composition order for convenience: host env, repo env, `REPO_ROOT`, `BUNDLE_ROOT`, bundle env, target env, blueprint variables, blueprint target env and configured dotenv files.
+- Target environments compose values in this order: host env, repo env, `REPO_ROOT`, `BUNDLE_ROOT`, bundle env, target env, blueprint variables, blueprint target env and configured dotenv files.
 - Watch roots default to the bundle root or the target `in` patterns, and ignore entries come from target config.
 - `--no-reload` disables watchers at runtime without mutating the committed blueprint.
 - `--no-deps` skips dependency containers while still running targets.
