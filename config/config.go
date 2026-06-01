@@ -12,6 +12,7 @@ import (
 type Config struct {
 	repoRoot   string
 	rpmDir     string
+	cacheDir   string
 	buildsPath string
 	dagPath    string
 	repo       *RepoConfig
@@ -41,6 +42,7 @@ func NewConfig() *Config {
 
 func (c *Config) initPaths() {
 	c.rpmDir = c.initRpmDir()
+	c.cacheDir = c.initCacheDir()
 	c.buildsPath = c.initBuildsPath()
 	c.dagPath = c.initDagPath()
 }
@@ -53,8 +55,16 @@ func (c *Config) initRpmDir() string {
 	return rpmDir
 }
 
+func (c *Config) initCacheDir() string {
+	cacheDir := filepath.Join(c.rpmDir, "cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		panic(fmt.Sprintf("failed to create .rpm/cache directory: %v", err))
+	}
+	return cacheDir
+}
+
 func (c *Config) initBuildsPath() string {
-	buildsPath := filepath.Join(c.rpmDir, "builds.json")
+	buildsPath := filepath.Join(c.cacheDir, "builds.json")
 	if _, err := os.Stat(buildsPath); os.IsNotExist(err) {
 		if err = os.WriteFile(buildsPath, []byte("{}"), 0644); err != nil {
 			panic(fmt.Sprintf("failed to create builds.json: %v", err))
@@ -64,7 +74,7 @@ func (c *Config) initBuildsPath() string {
 }
 
 func (c *Config) initDagPath() string {
-	return filepath.Join(c.rpmDir, "dag.json")
+	return filepath.Join(c.cacheDir, "dag.json")
 }
 
 func (c *Config) RepoRoot() string {

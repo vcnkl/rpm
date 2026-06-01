@@ -51,10 +51,6 @@ func (v *Validator) outputsExist(target *models.Target) bool {
 	}
 
 	for _, out := range target.Out {
-		if strings.HasPrefix(out, "@docker::") {
-			continue
-		}
-
 		path := v.resolveOutputPath(out, target.BundlePath)
 
 		if strings.Contains(path, "*") {
@@ -76,9 +72,6 @@ func (v *Validator) outputsExist(target *models.Target) bool {
 func (v *Validator) resolveOutputPath(out, bundlePath string) string {
 	if strings.HasPrefix(out, "//") {
 		return filepath.Join(v.repoRoot, out[2:])
-	}
-	if strings.HasPrefix(out, "@docker::") {
-		return ""
 	}
 	if strings.HasPrefix(out, "./") {
 		return filepath.Join(v.repoRoot, bundlePath, out[2:])

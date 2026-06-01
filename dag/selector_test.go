@@ -63,7 +63,7 @@ func TestSelector_SelectBySuffix(t *testing.T) {
 		},
 		{
 			name:          "no matching suffix",
-			suffix:        "_image",
+			suffix:        "_artifact",
 			expectedCount: 0,
 			expectedIDs:   []string{},
 		},

@@ -19,8 +19,6 @@ env:                          # Global environment variables
 logger:
   datetime:
     format: '2006-01-02T15:04:05Z07:00' # Go time layout for rpm log timestamps
-docker:                       # Docker backend configuration
-  backend: local              # or 'remote'
 deps:                         # External dependencies to check/install
   - label: node
     check_cmd: 'node --version'
@@ -65,7 +63,6 @@ targets:
 ```bash
 rpm build [targets...]              # Build specific targets
 rpm build                           # Build all *_build targets
-rpm build --docker                  # Build all *_image targets
 rpm build --force core              # Force rebuild (ignore cache)
 rpm build --dry-run core            # Show what would be built
 rpm build -j 4 core                 # Limit parallel jobs
@@ -120,7 +117,7 @@ Composed in order (later overrides earlier):
 ## Caching
 
 - Input hash: SHA256 of all files matching `in` patterns
-- Cache stored in `.rpm/builds.json`
+- Cache stored in `.rpm/cache/builds.json`
 - Cache hit requires: same input hash + all `out` files exist
 - Dependency rebuild propagates to dependents
 

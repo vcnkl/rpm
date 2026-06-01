@@ -20,10 +20,6 @@ func BuildCmd() *cli.Command {
 		ArgsUsage: "[targets...]",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
-				Name:  "docker",
-				Usage: "Build *_image targets instead of *_build",
-			},
-			&cli.BoolFlag{
 				Name:    "force",
 				Aliases: []string{"f"},
 				Usage:   "Ignore cache, rebuild all",
@@ -40,7 +36,6 @@ func BuildCmd() *cli.Command {
 		Action: func(ctx *cli.Context) error {
 			debug := ctx.Bool("debug")
 			force := ctx.Bool("force")
-			docker := ctx.Bool("docker")
 			affected := ctx.Bool("affected")
 			dryRun := ctx.Bool("dry-run")
 			parallel := ctx.Int("jobs")
@@ -68,11 +63,6 @@ func BuildCmd() *cli.Command {
 				log.Warn("failed to load cache", logger.Err(err))
 			}
 
-			suffix := "_build"
-			if docker {
-				suffix = "_image"
-			}
-
 			var targetIDs []string
 
 			selector := dag.NewSelector(graph, cfg.RepoRoot())
@@ -83,19 +73,19 @@ func BuildCmd() *cli.Command {
 				}
 				targets := selector.SelectAffected(changedFiles)
 				for _, t := range targets {
-					if strings.HasSuffix(t.Target.Name, suffix) {
+					if strings.HasSuffix(t.Target.Name, "_build") {
 						targetIDs = append(targetIDs, t.ID)
 					}
 				}
 			} else if ctx.Args().Len() > 0 {
-				targetIDs = selector.ResolveTargetRefs(ctx.Args().Slice(), suffix)
+				targetIDs = selector.ResolveTargetRefs(ctx.Args().Slice(), "_build")
 				for _, id := range targetIDs {
 					if _, ok := graph.Nodes[id]; !ok {
 						return cli.Exit("error: target not found: "+id, 1)
 					}
 				}
 			} else {
-				targets := selector.SelectBySuffix(suffix)
+				targets := selector.SelectBySuffix("_build")
 				for _, t := range targets {
 					targetIDs = append(targetIDs, t.ID)
 				}

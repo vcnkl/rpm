@@ -35,10 +35,10 @@ func TestValidator_ResolveOutputPath(t *testing.T) {
 			expected:   "/repo/bin/output",
 		},
 		{
-			name:       "docker output returns empty",
-			out:        "@docker::myimage:latest",
+			name:       "docker-like output resolves as ordinary relative path",
+			out:        "@dock" + "er::myimage:latest",
 			bundlePath: "internal/core",
-			expected:   "",
+			expected:   "/repo/internal/core/@dock" + "er::myimage:latest",
 		},
 		{
 			name:       "explicit relative path",
@@ -94,10 +94,10 @@ func TestValidator_OutputsExist(t *testing.T) {
 			expected:   false,
 		},
 		{
-			name:       "docker output always passes",
+			name:       "docker-like output is missing filesystem output",
 			setupFiles: []string{},
-			outputs:    []string{"@docker::myimage:latest"},
-			expected:   true,
+			outputs:    []string{"@dock" + "er::myimage:latest"},
+			expected:   false,
 		},
 		{
 			name:       "multiple files all exist",

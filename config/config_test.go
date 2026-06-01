@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,9 +21,6 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			expected: RepoConfig{
 				Shell: "/bin/sh",
 				Env:   map[string]string{},
-				Docker: DockerConfig{
-					Backend: "local",
-				},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -38,31 +36,6 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			expected: RepoConfig{
 				Shell: "/bin/bash",
 				Env:   map[string]string{},
-				Docker: DockerConfig{
-					Backend: "local",
-				},
-				Logger: LoggerConfig{
-					DateTime: LoggerDateTimeConfig{
-						Format: "2006-01-02T15:04:05Z07:00",
-					},
-				},
-			},
-		},
-		{
-			name: "preserves existing docker config",
-			initial: RepoConfig{
-				Docker: DockerConfig{
-					Backend: "remote",
-					URL:     "tcp://localhost:2375",
-				},
-			},
-			expected: RepoConfig{
-				Shell: "/bin/sh",
-				Env:   map[string]string{},
-				Docker: DockerConfig{
-					Backend: "remote",
-					URL:     "tcp://localhost:2375",
-				},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -78,9 +51,6 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			expected: RepoConfig{
 				Shell: "/bin/sh",
 				Env:   map[string]string{"FOO": "bar"},
-				Docker: DockerConfig{
-					Backend: "local",
-				},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -100,9 +70,6 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			expected: RepoConfig{
 				Shell: "/bin/sh",
 				Env:   map[string]string{},
-				Docker: DockerConfig{
-					Backend: "local",
-				},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02 15:04:05",
@@ -119,8 +86,6 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 
 			assert.Equal(t, tt.expected.Shell, cfg.Shell)
 			assert.Equal(t, tt.expected.Env, cfg.Env)
-			assert.Equal(t, tt.expected.Docker.Backend, cfg.Docker.Backend)
-			assert.Equal(t, tt.expected.Docker.URL, cfg.Docker.URL)
 			assert.Equal(t, tt.expected.Logger.DateTime.Format, cfg.Logger.DateTime.Format)
 		})
 	}
@@ -489,8 +454,8 @@ func TestConfig_TargetsByType(t *testing.T) {
 func TestConfig_Accessors(t *testing.T) {
 	cfg := &Config{
 		repoRoot:   "/repo",
-		buildsPath: "/repo/.rpm/builds.json",
-		dagPath:    "/repo/.rpm/dag.json",
+		buildsPath: "/repo/.rpm/cache/builds.json",
+		dagPath:    "/repo/.rpm/cache/dag.json",
 		repo:       &RepoConfig{Shell: "/bin/bash"},
 		bundles: map[string]*models.Bundle{
 			"core": {Name: "core"},
@@ -498,9 +463,23 @@ func TestConfig_Accessors(t *testing.T) {
 	}
 
 	assert.Equal(t, "/repo", cfg.RepoRoot())
-	assert.Equal(t, "/repo/.rpm/builds.json", cfg.BuildsPath())
-	assert.Equal(t, "/repo/.rpm/dag.json", cfg.DagPath())
+	assert.Equal(t, "/repo/.rpm/cache/builds.json", cfg.BuildsPath())
+	assert.Equal(t, "/repo/.rpm/cache/dag.json", cfg.DagPath())
 	assert.Equal(t, "/bin/bash", cfg.Repo().Shell)
 	assert.Len(t, cfg.Bundles(), 1)
 	assert.Equal(t, "core", cfg.Bundles()["core"].Name)
+}
+
+func TestConfig_InitPathsUsesCacheDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &Config{repoRoot: tmpDir}
+
+	cfg.initPaths()
+
+	assert.Equal(t, filepath.Join(tmpDir, ".rpm"), cfg.rpmDir)
+	assert.Equal(t, filepath.Join(tmpDir, ".rpm", "cache"), cfg.cacheDir)
+	assert.Equal(t, filepath.Join(tmpDir, ".rpm", "cache", "builds.json"), cfg.BuildsPath())
+	assert.Equal(t, filepath.Join(tmpDir, ".rpm", "cache", "dag.json"), cfg.DagPath())
+	assert.FileExists(t, cfg.BuildsPath())
+	assert.DirExists(t, filepath.Join(tmpDir, ".rpm", "cache"))
 }
