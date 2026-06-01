@@ -21,7 +21,7 @@ targets:
     config:
       working_dir: local
 
-  - name: serve
+  - name: web
     deps:
       - ":app_build"
     cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT TS_VAR=$TS_VAR"

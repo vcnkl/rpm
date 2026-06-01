@@ -6,12 +6,13 @@ const (
 )
 
 type EnvironmentBlueprint struct {
-	Version      int
-	Name         string
-	Variables    map[string]string
-	Targets      []EnvironmentTarget
-	Dependencies []EnvironmentDependency
-	ReloadPolicy ReloadPolicy
+	Version          int
+	Name             string
+	Variables        map[string]string
+	Targets          []EnvironmentTarget
+	Dependencies     []EnvironmentDependency
+	DependencyPolicy DependencyPolicy
+	ReloadPolicy     ReloadPolicy
 }
 
 type EnvironmentTarget struct {
@@ -27,6 +28,12 @@ type EnvironmentDependency struct {
 	Env     map[string]string
 	Ports   []string
 	Volumes []string
+}
+
+type DependencyPolicy struct {
+	Enabled bool
+	Include []string
+	Exclude []string
 }
 
 type DependencyInstanceMode string

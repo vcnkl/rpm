@@ -1,0 +1,20 @@
+version: 1
+name: local-stack
+live_reload:
+    enabled: true
+    debounce: 100ms
+targets:
+    - ref: go-app:serve
+      reload: true
+      env:
+        APP_PORT: "8080"
+    - ref: ts-app:web
+      reload: true
+dependencies:
+    enabled: true
+    include:
+        - go-app:postgres
+        - ts-app:mailhog
+    exclude: []
+variables:
+    LOG_LEVEL: debug

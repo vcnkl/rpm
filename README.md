@@ -84,6 +84,32 @@ rpm env up <blueprint>              # Validate, render, and run an environment
 rpm env down <blueprint>            # Stop a running environment
 ```
 
+Environment blueprints are committed YAML files stored in `.rpm/envs/<name>.yml`:
+
+```yaml
+version: 1
+name: local-stack
+live_reload:
+  enabled: true
+  debounce: 100ms
+targets:
+  - ref: go-app:serve
+    reload: true
+    env:
+      APP_PORT: "8080"
+  - ref: ts-app:web
+    reload: true
+dependencies:
+  enabled: true
+  include:
+    - go-app:postgres
+  exclude: []
+variables:
+  LOG_LEVEL: debug
+```
+
+Use `rpm env create --non-interactive <name> --target bundle:target --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and `targets[].reload` overrides the blueprint-level live reload setting per target.
+
 ### run
 ```bash
 rpm run <target>                    # Run any target by exact ID
@@ -115,7 +141,9 @@ Composed in order (later overrides earlier):
 4. `BUNDLE_ROOT` (auto-set)
 5. Bundle `env`
 6. Target `env`
-7. `.env` file (if `config.dotenv.enabled`)
+7. Blueprint `variables`
+8. Blueprint target `env`
+9. `.env` file (if `config.dotenv.enabled`)
 
 ## Caching
 

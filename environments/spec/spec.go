@@ -83,7 +83,10 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			})
 			bundleSeen[bundle.Name] = true
 			for _, dep := range bundle.Dependencies {
-				resolved.Dependencies = append(resolved.Dependencies, dependency(bundle.Name, dep))
+				ref := bundle.Name + ":" + dep.Name
+				if dependencyIncluded(blueprint.DependencyPolicy, ref) {
+					resolved.Dependencies = append(resolved.Dependencies, dependency(bundle.Name, dep))
+				}
 			}
 		}
 
@@ -188,6 +191,26 @@ func dependency(bundleName string, dep models.EnvironmentDependency) Dependency 
 		Ports:   ports,
 		Volumes: volumes,
 	}
+}
+
+func dependencyIncluded(policy models.DependencyPolicy, ref string) bool {
+	if !policy.Enabled {
+		return false
+	}
+	for _, excluded := range policy.Exclude {
+		if excluded == ref {
+			return false
+		}
+	}
+	if len(policy.Include) == 0 {
+		return true
+	}
+	for _, included := range policy.Include {
+		if included == ref {
+			return true
+		}
+	}
+	return false
 }
 
 func appendEnvMap(env []string, values map[string]string) []string {

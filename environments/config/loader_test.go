@@ -11,6 +11,7 @@ import (
 
 	rootconfig "github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
+	"github.com/vcnkl/rpm/models"
 )
 
 func TestLoadBlueprint(t *testing.T) {
@@ -49,6 +50,42 @@ func TestLoadBlueprintUnknownFile(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, envconfig.ErrUnknownBlueprint))
 	assert.Contains(t, err.Error(), ".rpm/envs/missing.yml")
+}
+
+func TestBlueprintPathUsesRpmEnvs(t *testing.T) {
+	repo := newTestRepo(t)
+
+	path, err := envconfig.BlueprintPath(repo, "local")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local.yml"), path)
+}
+
+func TestBlueprintPathRejectsTraversal(t *testing.T) {
+	repo := newTestRepo(t)
+
+	for _, name := range []string{"", ".", "..", "../repo", "../../repo", "nested/local", `nested\local`} {
+		t.Run(name, func(t *testing.T) {
+			_, err := envconfig.BlueprintPath(repo, name)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, envconfig.ErrInvalidBlueprintName))
+		})
+	}
+}
+
+func TestWriteBlueprintRejectsTraversalName(t *testing.T) {
+	repo := newTestRepo(t)
+
+	err := envconfig.WriteBlueprint(repo, &models.EnvironmentBlueprint{
+		Version: 1,
+		Name:    "../../repo",
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve"},
+		},
+		Variables: map[string]string{},
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, envconfig.ErrInvalidBlueprintName))
 }
 
 func TestLoadBlueprintDuplicateTargetRefs(t *testing.T) {
@@ -122,6 +159,122 @@ targets:
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"api:serve", "worker:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+}
+
+func TestLoadBlueprintDefaultsLiveReload(t *testing.T) {
+	repo := newTestRepo(t)
+	writeBlueprint(t, repo.RepoRoot(), "local", `
+name: local
+targets:
+  - ref: api:serve
+`)
+
+	blueprint, err := envconfig.LoadBlueprint(repo, "local")
+
+	require.NoError(t, err)
+	assert.True(t, blueprint.ReloadPolicy.Enabled)
+	assert.Equal(t, "100ms", blueprint.ReloadPolicy.Debounce)
+}
+
+func TestLoadBlueprintDependencyPolicy(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	writeBundleContent(t, repoRoot, "api", `
+name: api
+dependencies:
+  - name: postgres
+    image: postgres:16
+targets:
+  - name: serve
+    cmd: echo serve
+`)
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	writeBlueprint(t, repo.RepoRoot(), "local", `
+name: local
+targets:
+  - ref: api:serve
+dependencies:
+  enabled: true
+  include:
+    - api:postgres
+  exclude: []
+`)
+
+	blueprint, err := envconfig.LoadBlueprint(repo, "local")
+
+	require.NoError(t, err)
+	assert.True(t, blueprint.DependencyPolicy.Enabled)
+	assert.Equal(t, []string{"api:postgres"}, blueprint.DependencyPolicy.Include)
+	assert.Empty(t, blueprint.DependencyPolicy.Exclude)
+}
+
+func TestLoadBlueprintUnknownDependencyRef(t *testing.T) {
+	repo := newTestRepo(t)
+	writeBlueprint(t, repo.RepoRoot(), "local", `
+name: local
+targets:
+  - ref: api:serve
+dependencies:
+  enabled: true
+  include:
+    - api:postgres
+`)
+
+	_, err := envconfig.LoadBlueprint(repo, "local")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, envconfig.ErrUnknownDependencyRef))
+}
+
+func TestMarshalBlueprintDeterministicYAML(t *testing.T) {
+	reloadFalse := false
+	reloadTrue := true
+	blueprint := &models.EnvironmentBlueprint{
+		Version: 1,
+		Name:    "local-stack",
+		ReloadPolicy: models.ReloadPolicy{
+			Enabled:  true,
+			Debounce: "100ms",
+		},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "ts-app:web", Reload: &reloadTrue},
+			{Ref: "go-app:serve", Reload: &reloadFalse, Env: map[string]string{"APP_PORT": "8080", "LOG_LEVEL": "debug"}},
+		},
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: true,
+			Include: []string{"ts-app:mailhog", "go-app:postgres"},
+			Exclude: []string{"python-app:redis"},
+		},
+		Variables: map[string]string{"ZED": "last", "LOG_LEVEL": "debug"},
+	}
+
+	data, err := envconfig.MarshalBlueprint(blueprint)
+
+	require.NoError(t, err)
+	assert.Equal(t, `version: 1
+name: local-stack
+live_reload:
+    enabled: true
+    debounce: 100ms
+targets:
+    - ref: go-app:serve
+      reload: false
+      env:
+        APP_PORT: "8080"
+        LOG_LEVEL: debug
+    - ref: ts-app:web
+      reload: true
+dependencies:
+    enabled: true
+    include:
+        - go-app:postgres
+        - ts-app:mailhog
+    exclude:
+        - python-app:redis
+variables:
+    LOG_LEVEL: debug
+    ZED: last
+`, string(data))
 }
 
 func TestBundleDependencyDefaultsAndValidation(t *testing.T) {

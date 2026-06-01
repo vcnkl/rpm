@@ -117,6 +117,28 @@ func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	assert.Equal(t, []string{"a:serve", "z:serve"}, []string{resolved.Targets[0].Ref, resolved.Targets[1].Ref})
 }
 
+func TestResolveUsesTargetReloadOverride(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	writeBundle(t, repoRoot, "api", "api")
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	reload := true
+	blueprint := &models.EnvironmentBlueprint{
+		Name: "local",
+		ReloadPolicy: models.ReloadPolicy{
+			Enabled: false,
+		},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve", Reload: &reload, Env: map[string]string{}},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.True(t, resolved.Targets[0].Reload)
+}
+
 func writeBundle(t *testing.T, repoRoot string, name string, envValue string) {
 	t.Helper()
 	bundleRoot := filepath.Join(repoRoot, name)

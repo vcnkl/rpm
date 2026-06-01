@@ -1,0 +1,464 @@
+package create
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
+	rootconfig "github.com/vcnkl/rpm/config"
+	envconfig "github.com/vcnkl/rpm/environments/config"
+	"github.com/vcnkl/rpm/models"
+
+	"github.com/pkg/errors"
+)
+
+var (
+	ErrMissingBlueprintName = errors.New("missing blueprint name")
+	ErrMissingTargets       = errors.New("missing blueprint targets")
+	ErrMissingEditChange    = errors.New("missing blueprint edit change")
+)
+
+type CreateOptions struct {
+	Name           string
+	Targets        []string
+	Dependencies   bool
+	ReloadEnabled  bool
+	TargetReload   map[string]bool
+	NonInteractive bool
+	In             io.Reader
+	Out            io.Writer
+}
+
+type EditOptions struct {
+	Name           string
+	AddTargets     []string
+	RemoveTargets  []string
+	Dependencies   *bool
+	ReloadEnabled  *bool
+	TargetReload   map[string]bool
+	IncludeDeps    []string
+	ExcludeDeps    []string
+	NonInteractive bool
+	In             io.Reader
+	Out            io.Writer
+}
+
+func RunCreate(repo *rootconfig.Config, opts CreateOptions) error {
+	if opts.NonInteractive {
+		return createNonInteractive(repo, opts)
+	}
+	return createInteractive(repo, opts)
+}
+
+func RunEdit(repo *rootconfig.Config, opts EditOptions) error {
+	if opts.NonInteractive {
+		return editNonInteractive(repo, opts)
+	}
+	return editInteractive(repo, opts)
+}
+
+func createNonInteractive(repo *rootconfig.Config, opts CreateOptions) error {
+	if opts.Name == "" {
+		return ErrMissingBlueprintName
+	}
+	if len(opts.Targets) == 0 {
+		return ErrMissingTargets
+	}
+	blueprint, err := buildBlueprint(repo, opts.Name, opts.Targets, opts.ReloadEnabled, opts.TargetReload, opts.Dependencies)
+	if err != nil {
+		return err
+	}
+	return envconfig.WriteBlueprint(repo, blueprint)
+}
+
+func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
+	if opts.Name == "" {
+		return ErrMissingBlueprintName
+	}
+	if len(opts.AddTargets) == 0 && len(opts.RemoveTargets) == 0 && opts.Dependencies == nil && opts.ReloadEnabled == nil && len(opts.TargetReload) == 0 && len(opts.IncludeDeps) == 0 && len(opts.ExcludeDeps) == 0 {
+		return ErrMissingEditChange
+	}
+
+	blueprint, err := envconfig.LoadBlueprint(repo, opts.Name)
+	if err != nil {
+		return err
+	}
+	targets := targetMap(blueprint.Targets)
+	for _, ref := range opts.AddTargets {
+		if err := validateTargetRef(repo, ref); err != nil {
+			return err
+		}
+		targets[ref] = models.EnvironmentTarget{Ref: ref, Env: map[string]string{}}
+	}
+	for _, ref := range opts.RemoveTargets {
+		delete(targets, ref)
+	}
+	if opts.ReloadEnabled != nil {
+		blueprint.ReloadPolicy.Enabled = *opts.ReloadEnabled
+	}
+	for ref, reload := range opts.TargetReload {
+		target, ok := targets[ref]
+		if !ok {
+			return errors.Wrapf(envconfig.ErrUnknownBlueprintRef, "%s", ref)
+		}
+		value := reload
+		target.Reload = &value
+		targets[ref] = target
+	}
+	if opts.Dependencies != nil {
+		blueprint.DependencyPolicy.Enabled = *opts.Dependencies
+	}
+	if len(opts.IncludeDeps) > 0 {
+		if err := validateDependencyRefs(repo, opts.IncludeDeps); err != nil {
+			return err
+		}
+		blueprint.DependencyPolicy.Include = opts.IncludeDeps
+	}
+	if len(opts.ExcludeDeps) > 0 {
+		if err := validateDependencyRefs(repo, opts.ExcludeDeps); err != nil {
+			return err
+		}
+		blueprint.DependencyPolicy.Exclude = opts.ExcludeDeps
+	}
+	blueprint.Targets = targetSlice(targets)
+	if len(blueprint.Targets) == 0 {
+		return ErrMissingTargets
+	}
+	return envconfig.WriteBlueprint(repo, blueprint)
+}
+
+func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
+	in := opts.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := opts.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	prompt := newPrompt(in, out)
+	name := opts.Name
+	var err error
+	if name == "" {
+		name, err = prompt.ask("Blueprint name")
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		return ErrMissingBlueprintName
+	}
+	targets, err := prompt.chooseTargets(repo.AllTargets())
+	if err != nil {
+		return err
+	}
+	reload, err := prompt.askBool("Enable live reload", true)
+	if err != nil {
+		return err
+	}
+	targetReload := make(map[string]bool)
+	for _, ref := range targets {
+		value, err := prompt.askBool("Reload "+ref, reload)
+		if err != nil {
+			return err
+		}
+		targetReload[ref] = value
+	}
+	deps, err := prompt.askBool("Enable dependencies", false)
+	if err != nil {
+		return err
+	}
+	blueprint, err := buildBlueprint(repo, name, targets, reload, targetReload, deps)
+	if err != nil {
+		return err
+	}
+	return envconfig.WriteBlueprint(repo, blueprint)
+}
+
+func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
+	blueprint, err := envconfig.LoadBlueprint(repo, opts.Name)
+	if err != nil {
+		return err
+	}
+	in := opts.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := opts.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	prompt := newPrompt(in, out)
+	targets, err := prompt.chooseTargets(repo.AllTargets())
+	if err != nil {
+		return err
+	}
+	reload, err := prompt.askBool("Enable live reload", blueprint.ReloadPolicy.Enabled)
+	if err != nil {
+		return err
+	}
+	targetReload := make(map[string]bool)
+	existingTargets := targetMap(blueprint.Targets)
+	for _, ref := range targets {
+		fallback := reload
+		if target, ok := existingTargets[ref]; ok && target.Reload != nil {
+			fallback = *target.Reload
+		}
+		value, err := prompt.askBool("Reload "+ref, fallback)
+		if err != nil {
+			return err
+		}
+		targetReload[ref] = value
+	}
+	deps, err := prompt.askBool("Enable dependencies", blueprint.DependencyPolicy.Enabled)
+	if err != nil {
+		return err
+	}
+	next, err := buildBlueprint(repo, blueprint.Name, targets, reload, targetReload, deps)
+	if err != nil {
+		return err
+	}
+	for i := range next.Targets {
+		if existing, ok := existingTargets[next.Targets[i].Ref]; ok {
+			next.Targets[i].Env = existing.Env
+		}
+	}
+	include, err := prompt.askDefault("Dependency include refs", strings.Join(blueprint.DependencyPolicy.Include, ","))
+	if err != nil {
+		return err
+	}
+	exclude, err := prompt.askDefault("Dependency exclude refs", strings.Join(blueprint.DependencyPolicy.Exclude, ","))
+	if err != nil {
+		return err
+	}
+	next.Variables = blueprint.Variables
+	next.DependencyPolicy.Include = splitRefs(include)
+	next.DependencyPolicy.Exclude = splitRefs(exclude)
+	if err := validateDependencyRefs(repo, next.DependencyPolicy.Include); err != nil {
+		return err
+	}
+	if err := validateDependencyRefs(repo, next.DependencyPolicy.Exclude); err != nil {
+		return err
+	}
+	return envconfig.WriteBlueprint(repo, next)
+}
+
+func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, reload bool, targetReload map[string]bool, deps bool) (*models.EnvironmentBlueprint, error) {
+	seen := make(map[string]bool)
+	targets := make([]models.EnvironmentTarget, 0, len(targetRefs))
+	for _, ref := range targetRefs {
+		if seen[ref] {
+			continue
+		}
+		if err := validateTargetRef(repo, ref); err != nil {
+			return nil, err
+		}
+		seen[ref] = true
+		target := models.EnvironmentTarget{Ref: ref, Env: map[string]string{}}
+		if targetReload != nil {
+			if value, ok := targetReload[ref]; ok {
+				reloadValue := value
+				target.Reload = &reloadValue
+			}
+		}
+		targets = append(targets, target)
+	}
+	for ref := range targetReload {
+		if !seen[ref] {
+			return nil, errors.Wrapf(envconfig.ErrUnknownBlueprintRef, "%s", ref)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, ErrMissingTargets
+	}
+	return &models.EnvironmentBlueprint{
+		Version:   1,
+		Name:      name,
+		Variables: map[string]string{},
+		Targets:   targets,
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: deps,
+			Include: selectedDependencyRefs(repo, targetRefs, deps),
+			Exclude: []string{},
+		},
+		ReloadPolicy: models.ReloadPolicy{
+			Enabled:  reload,
+			Debounce: "100ms",
+		},
+	}, nil
+}
+
+func validateTargetRef(repo *rootconfig.Config, ref string) error {
+	if _, err := repo.ResolveTarget(ref); err != nil {
+		return errors.Wrapf(envconfig.ErrUnknownBlueprintRef, "%s", ref)
+	}
+	return nil
+}
+
+func validateDependencyRefs(repo *rootconfig.Config, refs []string) error {
+	known := make(map[string]bool)
+	for bundleName, bundle := range repo.Bundles() {
+		for _, dep := range bundle.Dependencies {
+			known[bundleName+":"+dep.Name] = true
+		}
+	}
+	for _, ref := range refs {
+		if !known[ref] {
+			return errors.Wrapf(envconfig.ErrUnknownDependencyRef, "%s", ref)
+		}
+	}
+	return nil
+}
+
+func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enabled bool) []string {
+	if !enabled {
+		return []string{}
+	}
+	bundles := make(map[string]bool)
+	for _, ref := range targetRefs {
+		bundle, _, ok := strings.Cut(ref, ":")
+		if ok {
+			bundles[bundle] = true
+		}
+	}
+	var refs []string
+	for name, bundle := range repo.Bundles() {
+		if !bundles[name] {
+			continue
+		}
+		for _, dep := range bundle.Dependencies {
+			refs = append(refs, name+":"+dep.Name)
+		}
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+func targetMap(targets []models.EnvironmentTarget) map[string]models.EnvironmentTarget {
+	result := make(map[string]models.EnvironmentTarget, len(targets))
+	for _, target := range targets {
+		result[target.Ref] = target
+	}
+	return result
+}
+
+func targetSlice(targets map[string]models.EnvironmentTarget) []models.EnvironmentTarget {
+	result := make([]models.EnvironmentTarget, 0, len(targets))
+	for _, target := range targets {
+		result = append(result, target)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Ref < result[j].Ref
+	})
+	return result
+}
+
+type prompt struct {
+	scanner *bufio.Scanner
+	out     io.Writer
+}
+
+func newPrompt(in io.Reader, out io.Writer) prompt {
+	return prompt{scanner: bufio.NewScanner(in), out: out}
+}
+
+func (p prompt) ask(label string) (string, error) {
+	fmt.Fprintf(p.out, "%s: ", label)
+	if !p.scanner.Scan() {
+		return "", p.scanner.Err()
+	}
+	return strings.TrimSpace(p.scanner.Text()), nil
+}
+
+func (p prompt) askDefault(label string, fallback string) (string, error) {
+	promptLabel := label
+	if fallback != "" {
+		promptLabel += " [" + fallback + "]"
+	}
+	value, err := p.ask(promptLabel)
+	if err != nil {
+		return "", err
+	}
+	if value == "" {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func (p prompt) askBool(label string, fallback bool) (bool, error) {
+	suffix := "y/N"
+	if fallback {
+		suffix = "Y/n"
+	}
+	value, err := p.ask(label + " [" + suffix + "]")
+	if err != nil {
+		return false, err
+	}
+	if value == "" {
+		return fallback, nil
+	}
+	switch strings.ToLower(value) {
+	case "y", "yes", "true", "1":
+		return true, nil
+	case "n", "no", "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean answer %q", value)
+	}
+}
+
+func (p prompt) chooseTargets(targets []*models.Target) ([]string, error) {
+	for i, target := range targets {
+		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
+	}
+	answer, err := p.ask("Targets (comma-separated numbers or refs)")
+	if err != nil {
+		return nil, err
+	}
+	if answer == "" {
+		return nil, ErrMissingTargets
+	}
+	targetByRef := make(map[string]bool)
+	for _, target := range targets {
+		targetByRef[target.ID()] = true
+	}
+	var refs []string
+	for _, item := range strings.Split(answer, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if index, err := strconv.Atoi(item); err == nil {
+			if index < 1 || index > len(targets) {
+				return nil, fmt.Errorf("target selection out of range: %d", index)
+			}
+			refs = append(refs, targets[index-1].ID())
+			continue
+		}
+		if !targetByRef[item] {
+			return nil, errors.Wrapf(envconfig.ErrUnknownBlueprintRef, "%s", item)
+		}
+		refs = append(refs, item)
+	}
+	return refs, nil
+}
+
+func splitRefs(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	parts := strings.Split(value, ",")
+	refs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			refs = append(refs, part)
+		}
+	}
+	sort.Strings(refs)
+	return refs
+}
