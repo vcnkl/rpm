@@ -82,7 +82,7 @@ dependencies:
     image: redis:7
     mode: dedicated           # one container per selected target in this bundle
 targets:
-  - name: run
+  - name: echo-123
     cmd: go run .
 ```
 
@@ -130,7 +130,7 @@ pre:
   - |
     echo "inline pre"
 targets:
-  - ref: go-app:run
+  - ref: go-app:echo-123
     reload: true
     env:
       APP_PORT: "8080"

@@ -155,10 +155,10 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:scripts/pre.sh"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"pre:inline:3"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"pre:inline:3"`)
-	assert.Contains(t, output, `"type":"process_started","ref":"go-app:run"`)
-	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:run"`)
-	assert.Contains(t, output, `"type":"process_started","ref":"python-app:run"`)
-	assert.Contains(t, output, `"type":"process_exited","ref":"python-app:run"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"go-app:echo-123"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:echo-123"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"python-app:echo-456"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"python-app:echo-456"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"ts-app:web"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"ts-app:web"`)
 	assert.Contains(t, output, "REPO_ROOT=/workspace")
@@ -166,9 +166,9 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Contains(t, output, "PRE_TARGET=/workspace/apps/go-app")
 	assert.Contains(t, output, "PRE_FILE=/workspace/apps/go-app")
 	assert.Contains(t, output, "PRE_INLINE=/workspace")
-	assert.Less(t, strings.Index(output, `"ref":"go-app:prepare"`), strings.Index(output, `"ref":"go-app:run"`))
-	assert.Less(t, strings.Index(output, `"ref":"go-app:scripts/pre.sh"`), strings.Index(output, `"ref":"go-app:run"`))
-	assert.Less(t, strings.Index(output, `"ref":"pre:inline:3"`), strings.Index(output, `"ref":"go-app:run"`))
+	assert.Less(t, strings.Index(output, `"ref":"go-app:prepare"`), strings.Index(output, `"ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"ref":"go-app:scripts/pre.sh"`), strings.Index(output, `"ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"ref":"pre:inline:3"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 }
 
 func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
@@ -196,7 +196,7 @@ func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
 	assert.Zero(t, rendered.exitCode, rendered.output)
 	assert.Equal(t, string(golden), rendered.output)
 
-	create := runWorkspaceCommand(t, ctx, ctr, "rpm env create --non-interactive smoke --target go-app:run --deps")
+	create := runWorkspaceCommand(t, ctx, ctr, "rpm env create --non-interactive smoke --target go-app:echo-123 --deps")
 	assert.Zero(t, create.exitCode, create.output)
 	created := runWorkspaceCommand(t, ctx, ctr, "rpm env validate smoke")
 	assert.Zero(t, created.exitCode, created.output)

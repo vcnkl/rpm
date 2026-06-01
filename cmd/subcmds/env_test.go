@@ -55,25 +55,25 @@ func TestEnvCreateNonInteractiveCommand(t *testing.T) {
 	repo := newCommandTestRepo(t)
 	app := cmd.NewApp()
 
-	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run", "--target", "ts-app:web"})
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target", "ts-app:web"})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func TestEnvEditNonInteractiveCommand(t *testing.T) {
 	repo := newCommandTestRepo(t)
 	app := cmd.NewApp()
-	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "--target", "go-app:run", "local-stack"}))
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "--target", "go-app:echo-123", "local-stack"}))
 
-	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "edit", "--non-interactive", "local-stack", "--add-target", "python-app:run"})
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "edit", "--non-interactive", "local-stack", "--add-target", "python-app:echo-456"})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "python-app:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "python-app:echo-456"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func TestEnvCreateNonInteractiveRejectsInvalidTargetReload(t *testing.T) {
@@ -81,7 +81,7 @@ func TestEnvCreateNonInteractiveRejectsInvalidTargetReload(t *testing.T) {
 	app := cmd.NewApp()
 	defer captureCliExit(t)()
 
-	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run", "--target-reload", "go-app:run=maybe"})
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target-reload", "go-app:echo-123=maybe"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid boolean value")
@@ -92,7 +92,7 @@ func TestEnvCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
 	app := cmd.NewApp()
 	defer captureCliExit(t)()
 
-	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run", "--target-reload", "missing:run=false"})
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target-reload", "missing:echo-123=false"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown blueprint target ref")
@@ -103,7 +103,7 @@ func TestEnvRenderWritesCachePathAndPrintsPath(t *testing.T) {
 	app := cmd.NewApp()
 	out := new(bytes.Buffer)
 	app.Writer = out
-	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run"}))
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123"}))
 	out.Reset()
 
 	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "render", "local-stack"})
@@ -119,7 +119,7 @@ func TestEnvRenderHonorsOutAfterBlueprint(t *testing.T) {
 	app := cmd.NewApp()
 	out := new(bytes.Buffer)
 	app.Writer = out
-	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run"}))
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123"}))
 	out.Reset()
 	renderedPath := filepath.Join(t.TempDir(), "local-stack.star")
 
@@ -146,7 +146,7 @@ func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
 	app := cmd.NewApp()
 	out := new(bytes.Buffer)
 	app.Writer = out
-	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:run", "--target-reload", "go-app:run=true"}))
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target-reload", "go-app:echo-123=true"}))
 	before, err := os.ReadFile(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack.yml"))
 	require.NoError(t, err)
 	out.Reset()
@@ -172,9 +172,9 @@ func newCommandTestRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
-	writeCommandBundle(t, repoRoot, "go-app", []string{"run"})
+	writeCommandBundle(t, repoRoot, "go-app", []string{"echo-123"})
 	writeCommandBundle(t, repoRoot, "ts-app", []string{"web"})
-	writeCommandBundle(t, repoRoot, "python-app", []string{"run"})
+	writeCommandBundle(t, repoRoot, "python-app", []string{"echo-456"})
 	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 }
 

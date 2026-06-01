@@ -11,7 +11,7 @@ dependencies:
       - "6379:6379"
 
 targets:
-  - name: run
+  - name: echo-456
     cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR"
     config:
       dotenv:

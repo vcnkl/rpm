@@ -54,28 +54,28 @@ rpm_pre(
 )
 
 rpm_target(
-    ref = "go-app:run",
+    ref = "go-app:echo-123",
     command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR\"",
     workdir = "<repo>/apps/go-app",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
     reload = True,
 )
 rpm_watch(
-    target = "go-app:run",
+    target = "go-app:echo-123",
     roots = ["<repo>/apps/go-app"],
     ignore = ["bin/**"],
     reload = True,
     enabled = True,
 )
 rpm_target(
-    ref = "python-app:run",
+    ref = "python-app:echo-456",
     command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR\"",
     workdir = "<repo>/apps/python-app",
     env = {"BUNDLE_ROOT": "<repo>/apps/python-app", "GLOBAL_VAR": "global_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "PYTHON_VAR": "python_value", "REPO_ROOT": "<repo>"},
     reload = False,
 )
 rpm_watch(
-    target = "python-app:run",
+    target = "python-app:echo-456",
     roots = ["<repo>/apps/python-app"],
     ignore = [],
     reload = False,
@@ -97,5 +97,5 @@ rpm_watch(
 )
 
 rpm_run(
-    order = ["go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:run", "python-app:run", "ts-app:web"],
+    order = ["go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
 )

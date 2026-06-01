@@ -9,13 +9,13 @@ pre:
     - |
       echo "PRE_INLINE=$REPO_ROOT"
 targets:
-    - ref: go-app:run
+    - ref: go-app:echo-123
       reload: true
       env:
         APP_PORT: "8080"
     - ref: ts-app:web
       reload: true
-    - ref: python-app:run
+    - ref: python-app:echo-456
       reload: false
 dependencies:
     enabled: true

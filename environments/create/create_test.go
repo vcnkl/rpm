@@ -19,7 +19,7 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"ts-app:web", "go-app:run"},
+		Targets:        []string{"ts-app:web", "go-app:echo-123"},
 		Dependencies:   true,
 		ReloadEnabled:  true,
 		NonInteractive: true,
@@ -28,7 +28,7 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.Equal(t, []string{"go-app:postgres", "ts-app:mailhog"}, blueprint.DependencyPolicy.Include)
 }
 
@@ -44,9 +44,9 @@ func TestRunCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:run"},
+		Targets:        []string{"go-app:echo-123"},
 		ReloadEnabled:  true,
-		TargetReload:   map[string]bool{"missing:run": false},
+		TargetReload:   map[string]bool{"missing:echo-123": false},
 		NonInteractive: true,
 	})
 
@@ -58,21 +58,21 @@ func TestRunEditNonInteractiveAddsTarget(t *testing.T) {
 	repo := newTestRepo(t)
 	require.NoError(t, envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:run"},
+		Targets:        []string{"go-app:echo-123"},
 		ReloadEnabled:  true,
 		NonInteractive: true,
 	}))
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name:           "local-stack",
-		AddTargets:     []string{"python-app:run"},
+		AddTargets:     []string{"python-app:echo-456"},
 		NonInteractive: true,
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "python-app:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "python-app:echo-456"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
@@ -80,13 +80,13 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:run,ts-app:web\n\n\n\nn\n"),
+		In:   strings.NewReader("go-app:echo-123,ts-app:web\n\n\n\nn\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.True(t, blueprint.ReloadPolicy.Enabled)
 	assert.False(t, blueprint.DependencyPolicy.Enabled)
 }
@@ -95,20 +95,20 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 	repo := newTestRepo(t)
 	require.NoError(t, envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
-		Targets:        []string{"go-app:run"},
+		Targets:        []string{"go-app:echo-123"},
 		ReloadEnabled:  true,
 		NonInteractive: true,
 	}))
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:run,python-app:run\n\n\n\n\n\n\n"),
+		In:   strings.NewReader("go-app:echo-123,python-app:echo-456\n\n\n\n\n\n\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:run", "python-app:run"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:echo-123", "python-app:echo-456"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func newTestRepo(t *testing.T) *rootconfig.Config {
@@ -125,14 +125,18 @@ func writeBundle(t *testing.T, repoRoot string, name string, dep string) {
 	t.Helper()
 	bundleRoot := filepath.Join(repoRoot, "apps", name)
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	echoTarget := "echo-123"
+	if name == "python-app" {
+		echoTarget = "echo-456"
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: `+name+`
 dependencies:
   - name: `+dep+`
     image: postgres:16
 targets:
-  - name: run
-    cmd: echo serve
+  - name: `+echoTarget+`
+    cmd: echo `+echoTarget+`
   - name: web
     cmd: echo web
 `), 0644))
