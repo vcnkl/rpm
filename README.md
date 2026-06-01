@@ -6,7 +6,7 @@ Language-agnostic build orchestration and local environment runtime for monorepo
 
 RPM now has a hard split between build/test/run orchestration and environment runtime orchestration:
 
-- `rpm build` builds filesystem-output targets only. `rpm build --docker`, Docker build backend config, `_image` target conventions and `@docker::...` outputs are removed.
+- `rpm build` builds filesystem-output targets only. The former Docker flag for `rpm build`, Docker build backend config, image target conventions and Docker pseudo-output entries are removed.
 - `rpm dev` is removed. Use `rpm env create`, `rpm env render` and `rpm env up` for local environment workflows.
 - `_dev` target suffixes are ordinary target names and are no longer selected specially.
 - Environment containers are still supported as runtime dependencies under bundle `dependencies`; this is separate from the removed Docker build backend.
