@@ -40,8 +40,9 @@ ignore:
 
 ```yaml
 name: my-service              # Bundle name (used in target IDs)
-env:                          # Bundle-level environment variables
-  SERVICE_PORT: '8080'
+env:                          # Environment-related bundle configuration
+  variables:                  # Bundle-level environment variables
+    SERVICE_PORT: '8080'
 targets:
   - name: build               # Target name → ID becomes "my-service:build"
     deps:                     # Dependencies (other targets)
@@ -64,23 +65,24 @@ targets:
         - '*.log'
 ```
 
-Bundle-level environment dependencies are declared next to targets and use tagged Docker image references. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
+Bundle-level environment dependencies are declared under `env.dependencies` and use tagged Docker image references. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
 
 ```yaml
 name: api
-dependencies:
-  - name: postgres
-    image: postgres:16
-    mode: shared              # one container per blueprint dependency
-    env:
-      POSTGRES_PASSWORD: example
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-  - name: redis
-    image: redis:7
-    mode: dedicated           # one container per selected target in this bundle
+env:
+  dependencies:
+    - name: postgres
+      image: postgres:16
+      mode: shared            # one container per blueprint dependency
+      env:
+        POSTGRES_PASSWORD: example
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres-data:/var/lib/postgresql/data
+    - name: redis
+      image: redis:7
+      mode: dedicated         # one container per selected target in this bundle
 targets:
   - name: echo-123
     cmd: go run .

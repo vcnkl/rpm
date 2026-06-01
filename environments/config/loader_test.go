@@ -248,9 +248,10 @@ func TestLoadBlueprintDependencyPolicy(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
-dependencies:
-  - name: postgres
-    image: postgres:16
+env:
+  dependencies:
+    - name: postgres
+      image: postgres:16
 targets:
   - name: serve
     cmd: echo serve
@@ -359,9 +360,10 @@ func TestBundleDependencyDefaultsAndValidation(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
-dependencies:
-  - name: postgres
-    image: postgres:16
+env:
+  dependencies:
+    - name: postgres
+      image: postgres:16
 targets:
   - name: serve
     cmd: echo serve

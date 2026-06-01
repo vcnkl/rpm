@@ -125,7 +125,7 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 	bundle := &models.Bundle{
 		Name:    cfg.Name,
 		Path:    relPath,
-		Env:     cfg.Env,
+		Env:     cfg.Env.Variables,
 		Targets: make([]*models.Target, 0, len(cfg.Targets)),
 	}
 
@@ -151,7 +151,7 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 		}
 		bundle.Targets = append(bundle.Targets, target)
 	}
-	for _, dep := range cfg.Dependencies {
+	for _, dep := range cfg.Env.Dependencies {
 		bundle.Dependencies = append(bundle.Dependencies, models.EnvironmentDependency{
 			Name:    dep.Name,
 			Image:   dep.Image,

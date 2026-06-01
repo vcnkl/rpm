@@ -131,9 +131,10 @@ func writeBundle(t *testing.T, repoRoot string, name string, dep string) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: `+name+`
-dependencies:
-  - name: `+dep+`
-    image: postgres:16
+env:
+  dependencies:
+    - name: `+dep+`
+      image: postgres:16
 targets:
   - name: `+echoTarget+`
     cmd: echo `+echoTarget+`

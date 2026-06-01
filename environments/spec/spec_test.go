@@ -54,7 +54,8 @@ env:
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: api
 env:
-  FROM_BUNDLE: bundle
+  variables:
+    FROM_BUNDLE: bundle
 targets:
   - name: serve
     cmd: echo serve
@@ -107,7 +108,8 @@ env:
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: api
 env:
-  BUNDLE_VAR: bundle
+  variables:
+    BUNDLE_VAR: bundle
 targets:
   - name: migrate
     env:

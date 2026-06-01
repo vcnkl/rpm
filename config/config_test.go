@@ -108,7 +108,9 @@ func TestBundleConfig_SetDefaults(t *testing.T) {
 			name: "preserves existing env",
 			initial: BundleConfig{
 				Name: "test",
-				Env:  map[string]string{"KEY": "value"},
+				Env: BundleEnvConfig{
+					Variables: map[string]string{"KEY": "value"},
+				},
 			},
 			expectEnvNil: false,
 		},
@@ -119,7 +121,8 @@ func TestBundleConfig_SetDefaults(t *testing.T) {
 			cfg := tt.initial
 			cfg.SetDefaults()
 
-			assert.NotNil(t, cfg.Env)
+			assert.NotNil(t, cfg.Env.Variables)
+			assert.NotNil(t, cfg.Env.Dependencies)
 		})
 	}
 }
@@ -490,7 +493,7 @@ func TestNewConfigValidationErrors(t *testing.T) {
 		{
 			name: "duplicate dependency names",
 			files: map[string]string{
-				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\n    image: postgres:16\n  - name: postgres\n    image: postgres:16\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\n      image: postgres:16\n    - name: postgres\n      image: postgres:16\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "duplicate dependency name",
 		},
@@ -525,14 +528,14 @@ func TestNewConfigValidationErrors(t *testing.T) {
 		{
 			name: "invalid dependency mode",
 			files: map[string]string{
-				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\n    image: postgres:16\n    mode: global\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\n      image: postgres:16\n      mode: global\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "invalid dependency mode",
 		},
 		{
 			name: "missing dependency image",
 			files: map[string]string{
-				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "invalid dependency image",
 		},

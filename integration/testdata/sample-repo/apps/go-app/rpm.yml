@@ -1,19 +1,19 @@
 name: go-app
 
 env:
-  GO_VAR: "go_value"
-  APP_PORT: "8080"
-
-dependencies:
-  - name: postgres
-    image: postgres:16
-    mode: shared
-    env:
-      POSTGRES_PASSWORD: example
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+  variables:
+    GO_VAR: "go_value"
+    APP_PORT: "8080"
+  dependencies:
+    - name: postgres
+      image: postgres:16
+      mode: shared
+      env:
+        POSTGRES_PASSWORD: example
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres-data:/var/lib/postgresql/data
 
 targets:
   - name: app_build

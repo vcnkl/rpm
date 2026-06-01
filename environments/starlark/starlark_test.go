@@ -141,12 +141,13 @@ func newStarlarkRepo(t *testing.T) *rootconfig.Config {
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "api", "rpm.yml"), []byte(`
 name: api
 env:
-  BUNDLE_VAR: bundle
-dependencies:
-  - name: postgres
-    image: postgres:16
-    ports:
-      - "5432:5432"
+  variables:
+    BUNDLE_VAR: bundle
+  dependencies:
+    - name: postgres
+      image: postgres:16
+      ports:
+        - "5432:5432"
 targets:
   - name: serve
     in:

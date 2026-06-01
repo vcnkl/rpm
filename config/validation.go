@@ -41,7 +41,7 @@ func validateBundleConfig(cfg *BundleConfig, path string) error {
 	}
 
 	deps := make(map[string]bool)
-	for _, dep := range cfg.Dependencies {
+	for _, dep := range cfg.Env.Dependencies {
 		if dep.Name == "" {
 			return errors.Wrapf(ErrInvalidDependency, "%s has dependency with missing name", cfg.Name)
 		}

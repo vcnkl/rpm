@@ -1,15 +1,15 @@
 name: ts-app
 
 env:
-  TS_VAR: "typescript_value"
-
-dependencies:
-  - name: mailhog
-    image: mailhog/mailhog:v1.0.1
-    mode: shared
-    ports:
-      - "1025:1025"
-      - "8025:8025"
+  variables:
+    TS_VAR: "typescript_value"
+  dependencies:
+    - name: mailhog
+      image: mailhog/mailhog:v1.0.1
+      mode: shared
+      ports:
+        - "1025:1025"
+        - "8025:8025"
 
 targets:
   - name: app_build

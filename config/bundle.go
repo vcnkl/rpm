@@ -3,9 +3,13 @@ package config
 import "github.com/vcnkl/rpm/models"
 
 type BundleConfig struct {
-	Name         string             `koanf:"name"`
-	Env          map[string]string  `koanf:"env"`
-	Targets      []TargetConfig     `koanf:"targets"`
+	Name    string          `koanf:"name"`
+	Env     BundleEnvConfig `koanf:"env"`
+	Targets []TargetConfig  `koanf:"targets"`
+}
+
+type BundleEnvConfig struct {
+	Variables    map[string]string  `koanf:"variables"`
 	Dependencies []DependencyConfig `koanf:"dependencies"`
 }
 
@@ -19,17 +23,17 @@ type DependencyConfig struct {
 }
 
 func (b *BundleConfig) SetDefaults() {
-	if b.Env == nil {
-		b.Env = make(map[string]string)
+	if b.Env.Variables == nil {
+		b.Env.Variables = make(map[string]string)
 	}
-	if b.Dependencies == nil {
-		b.Dependencies = []DependencyConfig{}
+	if b.Env.Dependencies == nil {
+		b.Env.Dependencies = []DependencyConfig{}
 	}
 	for i := range b.Targets {
 		b.Targets[i].SetDefaults()
 	}
-	for i := range b.Dependencies {
-		b.Dependencies[i].SetDefaults()
+	for i := range b.Env.Dependencies {
+		b.Env.Dependencies[i].SetDefaults()
 	}
 }
 
