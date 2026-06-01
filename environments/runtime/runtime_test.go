@@ -127,6 +127,59 @@ func TestWatcherChangeRestartsAffectedProcessOnly(t *testing.T) {
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
+func TestControlActionRestartsSelectedTarget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	processes := &fakeProcessRunner{block: true}
+	actions := make(chan envruntime.ControlAction, 1)
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:  processes,
+		EventSink:      &eventRecorder{},
+		ControlActions: actions,
+		NoReload:       true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, testPlan())
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: "api:serve"}
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+
+	assert.Equal(t, []string{"api:serve", "api:serve"}, processes.startedRefs())
+	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
+}
+
+func TestControlActionStopsEnvironment(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	actions := make(chan envruntime.ControlAction, 1)
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:  processes,
+		EventSink:      &eventRecorder{},
+		ControlActions: actions,
+		NoReload:       true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), testPlan())
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
+
+	require.NoError(t, <-done)
+	assert.Equal(t, 1, processes.stopCount("api:serve"))
+}
+
 func testPlan() *envstarlark.RuntimePlan {
 	return &envstarlark.RuntimePlan{
 		Environment: envstarlark.Environment{
@@ -260,14 +313,19 @@ func (w *fakeWatcher) Watch(ctx context.Context, watches []envstarlark.Watch, on
 }
 
 type eventRecorder struct {
+	mu     sync.Mutex
 	events []envruntime.Event
 }
 
 func (r *eventRecorder) Emit(event envruntime.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 }
 
 func (r *eventRecorder) types() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	types := make([]string, 0, len(r.events))
 	for _, event := range r.events {
 		types = append(types, event.Type)

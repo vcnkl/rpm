@@ -43,6 +43,11 @@ type EventSink interface {
 	Emit(Event)
 }
 
+type ControlAction struct {
+	Type string
+	Ref  string
+}
+
 type Event struct {
 	Type    string `json:"type"`
 	Ref     string `json:"ref,omitempty"`
@@ -62,6 +67,10 @@ const (
 	EventReloadStarted      = "reload_started"
 	EventReloadCompleted    = "reload_completed"
 	EventEnvironmentStopped = "environment_stopped"
+
+	ActionRestartTarget = "restart_target"
+	ActionRestartAll    = "restart_all"
+	ActionStop          = "stop_environment"
 )
 
 type Options struct {
@@ -69,15 +78,18 @@ type Options struct {
 	DependencyRunner DependencyRunner
 	ReloadWatcher    ReloadWatcher
 	EventSink        EventSink
+	ControlActions   <-chan ControlAction
 	NoDeps           bool
 	NoReload         bool
 }
 
 type Runner struct {
 	processes map[string]Process
+	plan      *envstarlark.RuntimePlan
 	done      chan processExit
 	mu        sync.Mutex
 	opts      Options
+	cancel    context.CancelFunc
 }
 
 func NewRunner(opts Options) *Runner {
@@ -88,6 +100,11 @@ func NewRunner(opts Options) *Runner {
 }
 
 func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
+	ctx, cancel := context.WithCancel(ctx)
+	r.cancel = cancel
+	r.plan = plan
+	defer cancel()
+
 	startedDeps := false
 	if r.opts.DependencyRunner != nil && !r.opts.NoDeps && len(plan.Dependencies) > 0 {
 		if err := r.opts.DependencyRunner.Up(ctx, plan.Environment.Name, plan); err != nil {
@@ -141,6 +158,14 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			r.stopProcesses(ctx)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return nil
+		case action, ok := <-r.opts.ControlActions:
+			if !ok {
+				continue
+			}
+			if r.handleControlAction(ctx, plan, action) {
+				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
+				return nil
+			}
 		case exit := <-r.done:
 			if exit.ref != "" {
 				r.removeProcess(exit.ref, exit.process)
@@ -160,6 +185,65 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			}
 		}
 	}
+}
+
+func (r *Runner) Restart(ctx context.Context, ref string) error {
+	if r.plan == nil {
+		return fmt.Errorf("runtime is not running")
+	}
+	target, ok := targetByRef(r.plan, ref)
+	if !ok {
+		return fmt.Errorf("unknown target %q", ref)
+	}
+	if process := r.processSnapshot()[ref]; process != nil {
+		if err := process.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	r.opts.EventSink.Emit(Event{Type: EventReloadStarted, Ref: ref})
+	if err := r.startTarget(ctx, target); err != nil {
+		r.opts.EventSink.Emit(Event{Type: EventReloadCompleted, Ref: ref, Error: err.Error()})
+		return err
+	}
+	r.opts.EventSink.Emit(Event{Type: EventReloadCompleted, Ref: ref})
+	return nil
+}
+
+func (r *Runner) RestartAll(ctx context.Context) error {
+	if r.plan == nil {
+		return fmt.Errorf("runtime is not running")
+	}
+	for _, ref := range targetOrder(r.plan) {
+		if _, ok := targetByRef(r.plan, ref); ok {
+			if err := r.Restart(ctx, ref); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Runner) Stop() {
+	if r.cancel != nil {
+		r.cancel()
+	}
+}
+
+func (r *Runner) handleControlAction(ctx context.Context, plan *envstarlark.RuntimePlan, action ControlAction) bool {
+	switch action.Type {
+	case ActionRestartTarget:
+		if action.Ref != "" {
+			r.reloadTarget(ctx, plan, action.Ref, "tui")
+		}
+	case ActionRestartAll:
+		for _, ref := range targetOrder(plan) {
+			r.reloadTarget(ctx, plan, ref, "tui")
+		}
+	case ActionStop:
+		r.stopProcesses(ctx)
+		return true
+	}
+	return false
 }
 
 type processExit struct {

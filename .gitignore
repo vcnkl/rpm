@@ -1,5 +1,6 @@
 # Builds
 .build/
+node_modules/
 
 # Temporary files
 tmp/

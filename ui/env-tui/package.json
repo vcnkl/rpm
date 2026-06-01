@@ -1,0 +1,19 @@
+{
+  "name": "rpm-env-tui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/app.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=../../environments/tui/bundle/index.js --banner:js='#!/usr/bin/env node'",
+    "test": "node --test src/*.test.ts"
+  },
+  "dependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@types/react": "^18.3.23",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}
