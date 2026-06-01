@@ -35,7 +35,7 @@ func TestGraph_AddTarget(t *testing.T) {
 			name: "add multiple targets",
 			targets: []*models.Target{
 				{Name: "app_build", BundleName: "core"},
-				{Name: "app_dev", BundleName: "core"},
+				{Name: "serve", BundleName: "core"},
 				{Name: "server_build", BundleName: "api"},
 			},
 			expectedCount:  3,

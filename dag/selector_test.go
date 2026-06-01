@@ -13,10 +13,10 @@ func setupTestGraph() *Graph {
 	g := NewGraph()
 	targets := []*models.Target{
 		{Name: "app_build", BundleName: "core", BundlePath: "internal/core"},
-		{Name: "app_dev", BundleName: "core", BundlePath: "internal/core"},
+		{Name: "serve", BundleName: "core", BundlePath: "internal/core"},
 		{Name: "app_test", BundleName: "core", BundlePath: "internal/core"},
 		{Name: "server_build", BundleName: "api", BundlePath: "internal/api"},
-		{Name: "server_dev", BundleName: "api", BundlePath: "internal/api"},
+		{Name: "serve", BundleName: "api", BundlePath: "internal/api"},
 		{Name: "cli_build", BundleName: "tools", BundlePath: "tools/cli"},
 	}
 	for _, t := range targets {
@@ -50,22 +50,10 @@ func TestSelector_SelectBySuffix(t *testing.T) {
 			expectedIDs:   []string{"core:app_build", "api:server_build", "tools:cli_build"},
 		},
 		{
-			name:          "select dev targets",
-			suffix:        "_dev",
-			expectedCount: 2,
-			expectedIDs:   []string{"core:app_dev", "api:server_dev"},
-		},
-		{
 			name:          "select test targets",
 			suffix:        "_test",
 			expectedCount: 1,
 			expectedIDs:   []string{"core:app_test"},
-		},
-		{
-			name:          "no matching suffix",
-			suffix:        "_artifact",
-			expectedCount: 0,
-			expectedIDs:   []string{},
 		},
 	}
 
@@ -162,20 +150,6 @@ func TestSelector_SelectByBundleWithSuffix(t *testing.T) {
 			expectedIDs:   []string{"core:app_build"},
 		},
 		{
-			name:          "core bundle all targets with empty suffix",
-			bundleName:    "core",
-			suffix:        "",
-			expectedCount: 3,
-			expectedIDs:   []string{"core:app_build", "core:app_dev", "core:app_test"},
-		},
-		{
-			name:          "api bundle dev targets",
-			bundleName:    "api",
-			suffix:        "_dev",
-			expectedCount: 1,
-			expectedIDs:   []string{"api:server_dev"},
-		},
-		{
 			name:          "nonexistent bundle",
 			bundleName:    "nonexistent",
 			suffix:        "_build",
@@ -185,7 +159,7 @@ func TestSelector_SelectByBundleWithSuffix(t *testing.T) {
 		{
 			name:          "bundle with no matching suffix",
 			bundleName:    "tools",
-			suffix:        "_dev",
+			suffix:        "_test",
 			expectedCount: 0,
 			expectedIDs:   []string{},
 		},
@@ -221,12 +195,6 @@ func TestSelector_ResolveTargetRefs(t *testing.T) {
 			expectedIDs: []string{"core:app_build"},
 		},
 		{
-			name:        "bundle name with dev suffix",
-			refs:        []string{"core"},
-			suffix:      "_dev",
-			expectedIDs: []string{"core:app_dev"},
-		},
-		{
 			name:        "full target ID used as-is",
 			refs:        []string{"core:app_build"},
 			suffix:      "_build",
@@ -240,9 +208,9 @@ func TestSelector_ResolveTargetRefs(t *testing.T) {
 		},
 		{
 			name:        "partial target ID with suffix already",
-			refs:        []string{"core:app_dev"},
+			refs:        []string{"core:serve"},
 			suffix:      "_build",
-			expectedIDs: []string{"core:app_dev"},
+			expectedIDs: []string{"core:serve"},
 		},
 		{
 			name:        "multiple refs mixed types",

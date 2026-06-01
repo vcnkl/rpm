@@ -49,8 +49,8 @@ targets:
       working_dir: 'local'    # 'local' (bundle dir), 'repo_root', or relative path
       dotenv:
         enabled: true         # Load .env from bundle directory
-      reload: true            # For dev mode: restart on file changes
-      ignore:                 # For dev mode: ignore patterns
+      reload: true            # Environment runtime reloads on file changes
+      ignore:                 # Environment runtime ignore patterns
         - 'tmp'
         - '*.log'
 ```
@@ -74,11 +74,14 @@ rpm test [targets...]               # Run specific test targets
 rpm test                            # Run all *_test targets
 ```
 
-### dev
+### env
 ```bash
-rpm dev [targets...]                # Start dev mode for *_dev targets
-rpm dev --dry-run core              # Show what would run without executing
-rpm dev --no-deps core              # Don't start dependency dev targets
+rpm env create [blueprint]          # Create an environment blueprint
+rpm env edit <blueprint>            # Edit an environment blueprint
+rpm env validate <blueprint>        # Validate an environment blueprint
+rpm env render <blueprint>          # Render deterministic environment Starlark
+rpm env up <blueprint>              # Validate, render, and run an environment
+rpm env down <blueprint>            # Stop a running environment
 ```
 
 ### run
@@ -121,7 +124,7 @@ Composed in order (later overrides earlier):
 - Cache hit requires: same input hash + all `out` files exist
 - Dependency rebuild propagates to dependents
 
-## Dev Mode
+## Environment Runtime
 
 - Watches bundle directory for file changes
 - Respects `config.ignore` patterns

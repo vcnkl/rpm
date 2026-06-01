@@ -169,7 +169,7 @@ func TestTargetConfig_SetDefaults(t *testing.T) {
 			initial: func() TargetConfig {
 				enabled := false
 				return TargetConfig{
-					Name: "app_dev",
+					Name: "serve",
 					Config: TargetOptions{
 						Dotenv: DotenvConfig{Enabled: &enabled},
 					},
@@ -184,7 +184,7 @@ func TestTargetConfig_SetDefaults(t *testing.T) {
 			initial: func() TargetConfig {
 				reload := false
 				return TargetConfig{
-					Name: "app_dev",
+					Name: "serve",
 					Config: TargetOptions{
 						Reload: &reload,
 					},
@@ -362,7 +362,7 @@ func TestConfig_AllTargets(t *testing.T) {
 					Name: "core",
 					Targets: []*models.Target{
 						{Name: "app_build", BundleName: "core"},
-						{Name: "app_dev", BundleName: "core"},
+						{Name: "serve", BundleName: "core"},
 					},
 				},
 				"api": {
@@ -380,72 +380,6 @@ func TestConfig_AllTargets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{bundles: tt.bundles}
 			targets := cfg.AllTargets()
-			assert.Len(t, targets, tt.expectedCount)
-		})
-	}
-}
-
-func TestConfig_TargetsByType(t *testing.T) {
-	tests := []struct {
-		name          string
-		bundles       map[string]*models.Bundle
-		suffix        string
-		expectedCount int
-	}{
-		{
-			name: "filter build targets",
-			bundles: map[string]*models.Bundle{
-				"core": {
-					Name: "core",
-					Targets: []*models.Target{
-						{Name: "app_build", BundleName: "core"},
-						{Name: "app_dev", BundleName: "core"},
-						{Name: "lib_build", BundleName: "core"},
-					},
-				},
-			},
-			suffix:        "_build",
-			expectedCount: 2,
-		},
-		{
-			name: "filter dev targets",
-			bundles: map[string]*models.Bundle{
-				"core": {
-					Name: "core",
-					Targets: []*models.Target{
-						{Name: "app_build", BundleName: "core"},
-						{Name: "app_dev", BundleName: "core"},
-					},
-				},
-				"api": {
-					Name: "api",
-					Targets: []*models.Target{
-						{Name: "server_dev", BundleName: "api"},
-					},
-				},
-			},
-			suffix:        "_dev",
-			expectedCount: 2,
-		},
-		{
-			name: "no matching targets",
-			bundles: map[string]*models.Bundle{
-				"core": {
-					Name: "core",
-					Targets: []*models.Target{
-						{Name: "app_build", BundleName: "core"},
-					},
-				},
-			},
-			suffix:        "_test",
-			expectedCount: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{bundles: tt.bundles}
-			targets := cfg.TargetsByType(tt.suffix)
 			assert.Len(t, targets, tt.expectedCount)
 		})
 	}

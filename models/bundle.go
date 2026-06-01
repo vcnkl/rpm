@@ -15,20 +15,3 @@ func (b *Bundle) Target(name string) (*Target, bool) {
 	}
 	return nil, false
 }
-
-func (b *Bundle) TargetsByType(suffix string) []*Target {
-	var result []*Target
-	for _, t := range b.Targets {
-		if hasSuffix(t.Name, suffix) {
-			result = append(result, t)
-		}
-	}
-	return result
-}
-
-func hasSuffix(s, suffix string) bool {
-	if len(s) < len(suffix) {
-		return false
-	}
-	return s[len(s)-len(suffix):] == suffix
-}

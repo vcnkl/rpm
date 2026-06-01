@@ -105,14 +105,6 @@ func (c *Config) AllTargets() []*models.Target {
 	return targets
 }
 
-func (c *Config) TargetsByType(suffix string) []*models.Target {
-	var targets []*models.Target
-	for _, bundle := range c.bundles {
-		targets = append(targets, bundle.TargetsByType(suffix)...)
-	}
-	return targets
-}
-
 func (c *Config) ResolveTarget(ref string) (*models.Target, error) {
 	parts := strings.Split(ref, ":")
 	if len(parts) != 2 {

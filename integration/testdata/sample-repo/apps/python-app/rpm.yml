@@ -4,7 +4,7 @@ env:
   PYTHON_VAR: "python_value"
 
 targets:
-  - name: app_dev
+  - name: serve
     cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR"
     config:
       dotenv:

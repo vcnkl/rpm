@@ -27,7 +27,3 @@ type DotenvConfig struct {
 func (t *Target) ID() string {
 	return t.BundleName + ":" + t.Name
 }
-
-func (t *Target) HasSuffix(suffix string) bool {
-	return hasSuffix(t.Name, suffix)
-}
