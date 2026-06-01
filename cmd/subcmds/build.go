@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/git"
 	"github.com/vcnkl/rpm/logger"
@@ -44,7 +43,7 @@ func BuildCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := config.NewConfig()
+			cfg := loadConfig(ctx)
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 
 			graph := dag.NewGraph()

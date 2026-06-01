@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -385,6 +387,174 @@ func TestConfig_AllTargets(t *testing.T) {
 	}
 }
 
+func TestConfig_AllTargetsSorted(t *testing.T) {
+	cfg := &Config{
+		bundles: map[string]*models.Bundle{
+			"z": {
+				Name: "z",
+				Targets: []*models.Target{
+					{Name: "b", BundleName: "z"},
+					{Name: "a", BundleName: "z"},
+				},
+			},
+			"a": {
+				Name: "a",
+				Targets: []*models.Target{
+					{Name: "b", BundleName: "a"},
+				},
+			},
+		},
+	}
+
+	targets := cfg.AllTargets()
+
+	assert.Equal(t, []string{"a:b", "z:a", "z:b"}, []string{targets[0].ID(), targets[1].ID(), targets[2].ID()})
+}
+
+func TestNewConfigWithRepoFile(t *testing.T) {
+	repoRoot := t.TempDir()
+	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/bash\n"), 0644))
+	requireNoError(t, os.MkdirAll(filepath.Join(repoRoot, "services", "api"), 0755))
+	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "services", "api", "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: serve
+    cmd: echo serve
+`), 0644))
+
+	cfg := NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+
+	assert.Equal(t, repoRoot, cfg.RepoRoot())
+	assert.Equal(t, "/bin/bash", cfg.Repo().Shell)
+	assert.NotNil(t, cfg.Bundles()["api"])
+}
+
+func TestDiscoverBundlesSortedByRepoRelativePath(t *testing.T) {
+	repoRoot := t.TempDir()
+	requireNoError(t, os.MkdirAll(filepath.Join(repoRoot, "z"), 0755))
+	requireNoError(t, os.MkdirAll(filepath.Join(repoRoot, "a"), 0755))
+	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "z", "rpm.yml"), []byte("name: z\ntargets:\n  - name: serve\n    cmd: echo z\n"), 0644))
+	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "a", "rpm.yml"), []byte("name: a\ntargets:\n  - name: serve\n    cmd: echo a\n"), 0644))
+
+	bundles := discoverBundles(repoRoot, nil)
+
+	assert.Equal(t, []string{"a", "z"}, []string{bundles[0].Name, bundles[1].Name})
+}
+
+func TestValidateDependencyImage(t *testing.T) {
+	tests := []struct {
+		image string
+		valid bool
+	}{
+		{image: "postgres:16", valid: true},
+		{image: "library/postgres:16", valid: true},
+		{image: "ghcr.io/org/service:2026.05.30", valid: true},
+		{image: "postgres", valid: false},
+		{image: "library/postgres", valid: false},
+		{image: "ghcr.io/org/service", valid: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.image, func(t *testing.T) {
+			err := ValidateDependencyImage(tt.image)
+			if tt.valid {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestNewConfigValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   map[string]string
+		message string
+	}{
+		{
+			name: "duplicate bundle names",
+			files: map[string]string{
+				"a/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"b/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "duplicate bundle name",
+		},
+		{
+			name: "duplicate target names",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo one\n  - name: serve\n    cmd: echo two\n",
+			},
+			message: "duplicate target name",
+		},
+		{
+			name: "duplicate dependency names",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\n    image: postgres:16\n  - name: postgres\n    image: postgres:16\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "duplicate dependency name",
+		},
+		{
+			name: "missing target command",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n",
+			},
+			message: "missing target command",
+		},
+		{
+			name: "missing bundle name",
+			files: map[string]string{
+				"api/rpm.yml": "targets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "missing bundle name",
+		},
+		{
+			name: "missing target name",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ntargets:\n  - cmd: echo serve\n",
+			},
+			message: "missing target name",
+		},
+		{
+			name: "invalid target dependency ref",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    deps:\n      - missing\n    cmd: echo serve\n",
+			},
+			message: "invalid target ref",
+		},
+		{
+			name: "invalid dependency mode",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\n    image: postgres:16\n    mode: global\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "invalid dependency mode",
+		},
+		{
+			name: "missing dependency image",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\ndependencies:\n  - name: postgres\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "invalid dependency image",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+			for path, content := range tt.files {
+				fullPath := filepath.Join(repoRoot, path)
+				requireNoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+				requireNoError(t, os.WriteFile(fullPath, []byte(content), 0644))
+			}
+
+			assertPanicsContains(t, tt.message, func() {
+				NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+			})
+		})
+	}
+}
+
 func TestConfig_Accessors(t *testing.T) {
 	cfg := &Config{
 		repoRoot:   "/repo",
@@ -402,6 +572,25 @@ func TestConfig_Accessors(t *testing.T) {
 	assert.Equal(t, "/bin/bash", cfg.Repo().Shell)
 	assert.Len(t, cfg.Bundles(), 1)
 	assert.Equal(t, "core", cfg.Bundles()["core"].Name)
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertPanicsContains(t *testing.T, message string, fn func()) {
+	t.Helper()
+	defer func() {
+		value := recover()
+		if value == nil {
+			t.Fatalf("expected panic containing %q", message)
+		}
+		assert.Contains(t, fmt.Sprint(value), message)
+	}()
+	fn()
 }
 
 func TestConfig_InitPathsUsesCacheDirectory(t *testing.T) {

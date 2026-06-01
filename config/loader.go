@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vcnkl/rpm/git"
@@ -44,7 +45,7 @@ func loadRepoConfig(path string) *RepoConfig {
 }
 
 func discoverBundles(repoRoot string, ignore []string) []*models.Bundle {
-	var bundles []*models.Bundle
+	var paths []string
 
 	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -73,8 +74,7 @@ func discoverBundles(repoRoot string, ignore []string) []*models.Bundle {
 		}
 
 		if info.Name() == "rpm.yml" {
-			bundle := loadBundleConfig(path, repoRoot)
-			bundles = append(bundles, bundle)
+			paths = append(paths, path)
 		}
 
 		return nil
@@ -84,6 +84,19 @@ func discoverBundles(repoRoot string, ignore []string) []*models.Bundle {
 		panic(fmt.Sprintf("failed to discover bundles: %v", err))
 	}
 
+	sort.Slice(paths, func(i, j int) bool {
+		left, leftErr := filepath.Rel(repoRoot, paths[i])
+		right, rightErr := filepath.Rel(repoRoot, paths[j])
+		if leftErr != nil || rightErr != nil {
+			return paths[i] < paths[j]
+		}
+		return filepath.ToSlash(left) < filepath.ToSlash(right)
+	})
+
+	bundles := make([]*models.Bundle, 0, len(paths))
+	for _, path := range paths {
+		bundles = append(bundles, loadBundleConfig(path, repoRoot))
+	}
 	return bundles
 }
 
@@ -99,6 +112,9 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 	}
 
 	cfg.SetDefaults()
+	if err := validateBundleConfig(&cfg, path); err != nil {
+		panic(fmt.Sprintf("invalid rpm.yml at %s: %v", path, err))
+	}
 
 	bundlePath := filepath.Dir(path)
 	relPath, err := filepath.Rel(repoRoot, bundlePath)
@@ -134,6 +150,16 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 			},
 		}
 		bundle.Targets = append(bundle.Targets, target)
+	}
+	for _, dep := range cfg.Dependencies {
+		bundle.Dependencies = append(bundle.Dependencies, models.EnvironmentDependency{
+			Name:    dep.Name,
+			Image:   dep.Image,
+			Mode:    dep.Mode,
+			Env:     dep.Env,
+			Ports:   dep.Ports,
+			Volumes: dep.Volumes,
+		})
 	}
 
 	return bundle

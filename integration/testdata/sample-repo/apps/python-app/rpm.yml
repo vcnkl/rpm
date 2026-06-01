@@ -3,6 +3,13 @@ name: python-app
 env:
   PYTHON_VAR: "python_value"
 
+dependencies:
+  - name: redis
+    image: redis:7
+    mode: dedicated
+    ports:
+      - "6379:6379"
+
 targets:
   - name: serve
     cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR"

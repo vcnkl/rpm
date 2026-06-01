@@ -38,7 +38,7 @@ func GraphCmd() *cli.Command {
 				level = logger.DebugLevel
 			}
 
-			cfg := config.NewConfig()
+			cfg := loadConfig(ctx)
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 			_ = log
 

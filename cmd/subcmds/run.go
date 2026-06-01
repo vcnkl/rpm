@@ -2,7 +2,6 @@ package subcmds
 
 import (
 	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/logger"
 
@@ -26,7 +25,7 @@ func RunCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := config.NewConfig()
+			cfg := loadConfig(ctx)
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 
 			graph := dag.NewGraph()

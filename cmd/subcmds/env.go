@@ -1,6 +1,8 @@
 package subcmds
 
 import (
+	envconfig "github.com/vcnkl/rpm/environments/config"
+
 	"github.com/urfave/cli/v2"
 )
 
@@ -53,7 +55,11 @@ func envValidateCmd() *cli.Command {
 			if ctx.Args().Len() == 0 {
 				return cli.Exit("error: blueprint argument required", 1)
 			}
-			return envPlaceholder("validate")
+			cfg := loadConfig(ctx)
+			if _, err := envconfig.LoadBlueprint(cfg, ctx.Args().First()); err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			return nil
 		},
 	}
 }

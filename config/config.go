@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vcnkl/rpm/models"
@@ -21,11 +22,26 @@ type Config struct {
 
 func NewConfig() *Config {
 	repoRoot := findRepoRoot()
-	repo := loadRepoConfig(filepath.Join(repoRoot, "repo.yml"))
+	return newConfig(repoRoot, filepath.Join(repoRoot, "repo.yml"))
+}
+
+func NewConfigWithRepoFile(path string) *Config {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		panic(fmt.Sprintf("failed to resolve repo config path %s: %v", path, err))
+	}
+	return newConfig(filepath.Dir(absPath), absPath)
+}
+
+func newConfig(repoRoot string, repoFile string) *Config {
+	repo := loadRepoConfig(repoFile)
 	bundles := discoverBundles(repoRoot, repo.Ignore)
 
 	bundleMap := make(map[string]*models.Bundle, len(bundles))
 	for _, b := range bundles {
+		if _, ok := bundleMap[b.Name]; ok {
+			panic(fmt.Sprintf("duplicate bundle name %q", b.Name))
+		}
 		bundleMap[b.Name] = b
 	}
 
@@ -102,6 +118,9 @@ func (c *Config) AllTargets() []*models.Target {
 	for _, bundle := range c.bundles {
 		targets = append(targets, bundle.Targets...)
 	}
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].ID() < targets[j].ID()
+	})
 	return targets
 }
 

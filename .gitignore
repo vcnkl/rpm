@@ -4,7 +4,7 @@
 # Temporary files
 tmp/
 *.log
-.rpm/cache/
+**/.rpm/cache/
 
 # Code coverage / test artifacts
 *.out
