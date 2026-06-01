@@ -124,6 +124,37 @@ func TestIntegration_EnvHelp(t *testing.T) {
 	assert.Contains(t, output, "down")
 }
 
+func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	if os.Getenv("SKIP_INTEGRATION") == "true" {
+		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
+	}
+
+	ctx := context.Background()
+	ctr := startTestContainer(t, ctx)
+	defer testcontainers.CleanupContainer(t, ctr)
+
+	exitCode, reader, err := ctr.Exec(ctx, []string{"sh", "-c", "cd /workspace && rpm env up local-stack --non-interactive --no-deps --no-reload"})
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(reader)
+	require.NoError(t, err)
+
+	output := buf.String()
+	t.Logf("rpm env up output (exit code %d): %s", exitCode, output)
+
+	assert.Zero(t, exitCode)
+	assert.Contains(t, output, `"type":"process_output","ref":"go-app:serve"`)
+	assert.Contains(t, output, `"type":"process_output","ref":"ts-app:web"`)
+	assert.Contains(t, output, "REPO_ROOT=/workspace")
+	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/go-app")
+	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/ts-app")
+}
+
 func TestIntegration_BuildCommand(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

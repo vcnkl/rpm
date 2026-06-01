@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/vcnkl/rpm/actions"
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	envcreate "github.com/vcnkl/rpm/environments/create"
 	"github.com/vcnkl/rpm/environments/generator"
 	"github.com/vcnkl/rpm/environments/spec"
-	"github.com/vcnkl/rpm/models"
 
 	"github.com/urfave/cli/v2"
 )
@@ -270,10 +270,12 @@ func envUpCmd() *cli.Command {
 			if name == "" {
 				return cli.Exit("error: blueprint argument required", 1)
 			}
+			noReload := ctx.Bool("no-reload") || trailingBools["no-reload"]
+			noDeps := ctx.Bool("no-deps") || trailingBools["no-deps"]
 			if ctx.Bool("render-only") || trailingBools["render-only"] {
 				path, err := renderEnvironment(ctx, name, "", renderOptions{
-					NoReload: ctx.Bool("no-reload") || trailingBools["no-reload"],
-					NoDeps:   ctx.Bool("no-deps") || trailingBools["no-deps"],
+					NoReload: noReload,
+					NoDeps:   noDeps,
 				})
 				if err != nil {
 					return cli.Exit("error: "+err.Error(), 1)
@@ -281,7 +283,17 @@ func envUpCmd() *cli.Command {
 				fmt.Fprintln(ctx.App.Writer, path)
 				return nil
 			}
-			return envPlaceholder("up")
+			cfg := loadConfig(ctx)
+			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
+			if err := action.Up(ctx.Context, actions.EnvUpOptions{
+				Blueprint:      name,
+				NoReload:       noReload,
+				NoDeps:         noDeps,
+				NonInteractive: ctx.Bool("non-interactive") || trailingBools["non-interactive"],
+			}); err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			return nil
 		},
 	}
 }
@@ -295,13 +307,14 @@ func envDownCmd() *cli.Command {
 			if ctx.Args().Len() == 0 {
 				return cli.Exit("error: blueprint argument required", 1)
 			}
-			return envPlaceholder("down")
+			cfg := loadConfig(ctx)
+			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
+			if err := action.Down(ctx.Context, actions.EnvDownOptions{Blueprint: ctx.Args().First()}); err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			return nil
 		},
 	}
-}
-
-func envPlaceholder(action string) error {
-	return cli.Exit("error: env "+action+" is not implemented until the environment runtime is added", 1)
 }
 
 type renderOptions struct {
@@ -315,50 +328,15 @@ func renderEnvironment(ctx *cli.Context, name string, out string, opts renderOpt
 	if err != nil {
 		return "", err
 	}
-	blueprint = blueprintWithRenderOptions(blueprint, opts)
+	blueprint = spec.BlueprintWithRuntimeOptions(blueprint, spec.RuntimeOptions{
+		NoReload: opts.NoReload,
+		NoDeps:   opts.NoDeps,
+	})
 	resolved, err := spec.Resolve(cfg, blueprint)
 	if err != nil {
 		return "", err
 	}
 	return generator.Write(cfg, resolved, out)
-}
-
-func blueprintWithRenderOptions(blueprint *models.EnvironmentBlueprint, opts renderOptions) *models.EnvironmentBlueprint {
-	next := *blueprint
-	next.Variables = copyStringMap(blueprint.Variables)
-	next.Targets = append([]models.EnvironmentTarget{}, blueprint.Targets...)
-	for i := range next.Targets {
-		next.Targets[i].Env = copyStringMap(next.Targets[i].Env)
-	}
-	next.DependencyPolicy = models.DependencyPolicy{
-		Enabled: blueprint.DependencyPolicy.Enabled,
-		Include: append([]string{}, blueprint.DependencyPolicy.Include...),
-		Exclude: append([]string{}, blueprint.DependencyPolicy.Exclude...),
-	}
-	if opts.NoDeps {
-		next.DependencyPolicy.Enabled = false
-		next.DependencyPolicy.Include = []string{}
-		next.DependencyPolicy.Exclude = []string{}
-	}
-	if opts.NoReload {
-		next.ReloadPolicy.Enabled = false
-		for i := range next.Targets {
-			value := false
-			next.Targets[i].Reload = &value
-		}
-	}
-	return &next
-}
-
-func copyStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return map[string]string{}
-	}
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
 }
 
 func parseBoolAssignments(values []string) (map[string]bool, error) {

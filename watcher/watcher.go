@@ -17,19 +17,28 @@ type Watcher struct {
 	ignore   []string
 	onChange func(path string)
 	fsw      *fsnotify.Watcher
+	debounce time.Duration
 	mu       sync.Mutex
 }
 
 func NewWatcher(paths []string, ignore []string) (*Watcher, error) {
+	return NewWatcherWithDebounce(paths, ignore, 100*time.Millisecond)
+}
+
+func NewWatcherWithDebounce(paths []string, ignore []string, debounce time.Duration) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file watcher: %w", err)
 	}
+	if debounce <= 0 {
+		debounce = 100 * time.Millisecond
+	}
 
 	return &Watcher{
-		paths:  paths,
-		ignore: ignore,
-		fsw:    fsw,
+		paths:    paths,
+		ignore:   ignore,
+		fsw:      fsw,
+		debounce: debounce,
 	}, nil
 }
 
@@ -46,7 +55,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 		}
 	}
 
-	debouncer := NewDebouncer(100 * time.Millisecond)
+	debouncer := NewDebouncer(w.debounce)
 
 	go func() {
 		for {
