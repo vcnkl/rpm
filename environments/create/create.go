@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	rootconfig "github.com/vcnkl/rpm/config"
+	"github.com/vcnkl/rpm/dag"
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/models"
 
@@ -152,7 +153,11 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if strings.TrimSpace(name) == "" {
 		return ErrMissingBlueprintName
 	}
-	targets, err := prompt.chooseTargets(repo.AllTargets())
+	graph, err := buildTargetGraph(repo)
+	if err != nil {
+		return err
+	}
+	targets, err := prompt.chooseTargets(repo.AllTargets(), graph, nil)
 	if err != nil {
 		return err
 	}
@@ -193,7 +198,12 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		out = os.Stdout
 	}
 	prompt := newPrompt(in, out)
-	targets, err := prompt.chooseTargets(repo.AllTargets())
+	graph, err := buildTargetGraph(repo)
+	if err != nil {
+		return err
+	}
+	existingTargets := targetMap(blueprint.Targets)
+	targets, err := prompt.chooseTargets(repo.AllTargets(), graph, targetRefs(existingTargets))
 	if err != nil {
 		return err
 	}
@@ -202,7 +212,6 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		return err
 	}
 	targetReload := make(map[string]bool)
-	existingTargets := targetMap(blueprint.Targets)
 	for _, ref := range targets {
 		fallback := reload
 		if target, ok := existingTargets[ref]; ok && target.Reload != nil {
@@ -227,17 +236,17 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 			next.Targets[i].Env = existing.Env
 		}
 	}
-	include, err := prompt.askDefault("Dependency include refs", strings.Join(blueprint.DependencyPolicy.Include, ","))
+	include, err := prompt.chooseDependencies("Dependency include refs", dependencyRefs(repo), blueprint.DependencyPolicy.Include)
 	if err != nil {
 		return err
 	}
-	exclude, err := prompt.askDefault("Dependency exclude refs", strings.Join(blueprint.DependencyPolicy.Exclude, ","))
+	exclude, err := prompt.chooseDependencies("Dependency exclude refs", dependencyRefs(repo), blueprint.DependencyPolicy.Exclude)
 	if err != nil {
 		return err
 	}
 	next.Variables = blueprint.Variables
-	next.DependencyPolicy.Include = splitRefs(include)
-	next.DependencyPolicy.Exclude = splitRefs(exclude)
+	next.DependencyPolicy.Include = include
+	next.DependencyPolicy.Exclude = exclude
 	if err := validateDependencyRefs(repo, next.DependencyPolicy.Include); err != nil {
 		return err
 	}
@@ -338,6 +347,30 @@ func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enable
 	return refs
 }
 
+func dependencyRefs(repo *rootconfig.Config) []string {
+	var refs []string
+	for bundleName, bundle := range repo.Bundles() {
+		for _, dep := range bundle.Dependencies {
+			refs = append(refs, bundleName+":"+dep.Name)
+		}
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+func buildTargetGraph(repo *rootconfig.Config) (*dag.Graph, error) {
+	graph := dag.NewGraph()
+	for _, bundle := range repo.Bundles() {
+		for _, target := range bundle.Targets {
+			graph.AddTarget(target)
+		}
+	}
+	if err := graph.Resolve(repo.Bundles()); err != nil {
+		return nil, err
+	}
+	return graph, nil
+}
+
 func targetMap(targets []models.EnvironmentTarget) map[string]models.EnvironmentTarget {
 	result := make(map[string]models.EnvironmentTarget, len(targets))
 	for _, target := range targets {
@@ -357,13 +390,23 @@ func targetSlice(targets map[string]models.EnvironmentTarget) []models.Environme
 	return result
 }
 
+func targetRefs(targets map[string]models.EnvironmentTarget) []string {
+	refs := make([]string, 0, len(targets))
+	for ref := range targets {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
 type prompt struct {
+	in      io.Reader
 	scanner *bufio.Scanner
 	out     io.Writer
 }
 
 func newPrompt(in io.Reader, out io.Writer) prompt {
-	return prompt{scanner: bufio.NewScanner(in), out: out}
+	return prompt{in: in, scanner: bufio.NewScanner(in), out: out}
 }
 
 func (p prompt) ask(label string) (string, error) {
@@ -411,7 +454,10 @@ func (p prompt) askBool(label string, fallback bool) (bool, error) {
 	}
 }
 
-func (p prompt) chooseTargets(targets []*models.Target) ([]string, error) {
+func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, selected []string) ([]string, error) {
+	if selector, ok := newTerminalSelector(p.in, p.out); ok {
+		return selector.selectTargets("Select environment targets", targets, graph, selected)
+	}
 	for i, target := range targets {
 		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
 	}
@@ -445,6 +491,17 @@ func (p prompt) chooseTargets(targets []*models.Target) ([]string, error) {
 		refs = append(refs, item)
 	}
 	return refs, nil
+}
+
+func (p prompt) chooseDependencies(label string, refs []string, selected []string) ([]string, error) {
+	if selector, ok := newTerminalSelector(p.in, p.out); ok {
+		return selector.selectDependencies(label, refs, selected)
+	}
+	answer, err := p.askDefault(label, strings.Join(selected, ","))
+	if err != nil {
+		return nil, err
+	}
+	return splitRefs(answer), nil
 }
 
 func splitRefs(value string) []string {

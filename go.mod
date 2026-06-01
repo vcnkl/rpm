@@ -16,6 +16,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/urfave/cli/v2 v2.27.1
 	go.starlark.net v0.0.0-20260324133313-ffb3f39dd27a
+	golang.org/x/term v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
