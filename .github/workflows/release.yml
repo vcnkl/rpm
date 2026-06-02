@@ -42,6 +42,9 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
+      - name: Build rpm
+        run: ./build.sh
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -4,7 +4,7 @@ project_name: rpm
 
 before:
   hooks:
-    - sh -c 'cd ui/env-tui && yarn install --immutable && yarn build'
+    - ./build.sh --tui-only
     - go mod tidy
 
 builds:
