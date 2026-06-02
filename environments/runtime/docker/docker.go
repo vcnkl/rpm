@@ -4,18 +4,29 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/containerd/errdefs"
+	sdkclient "github.com/docker/go-sdk/client"
+	sdkcontainer "github.com/docker/go-sdk/container"
+	dockercontext "github.com/docker/go-sdk/context"
+	sdknetwork "github.com/docker/go-sdk/network"
+	sdkvolume "github.com/docker/go-sdk/volume"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
-type CommandRunner interface {
-	Run(ctx context.Context, name string, args ...string) error
+type Backend interface {
+	EnsureNetwork(ctx context.Context, name string) error
+	EnsureVolume(ctx context.Context, name string) error
+	RunContainer(ctx context.Context, spec ContainerSpec) error
+	RemoveContainer(ctx context.Context, name string) error
+	RemoveNetwork(ctx context.Context, name string) error
 }
 
 type PortAllocator interface {
@@ -23,44 +34,53 @@ type PortAllocator interface {
 }
 
 type Options struct {
-	CommandRunner CommandRunner
+	Backend       Backend
 	PortAllocator PortAllocator
 }
 
+type ContainerSpec struct {
+	Name    string
+	Image   string
+	Network string
+	Env     map[string]string
+	Ports   []string
+	Volumes []string
+}
+
 type CLI struct {
-	runner        CommandRunner
+	backend       Backend
 	portAllocator PortAllocator
 }
 
 func NewCLI(opts Options) *CLI {
-	runner := opts.CommandRunner
-	if runner == nil {
-		runner = osRunner{}
+	backend := opts.Backend
+	if backend == nil {
+		backend = sdkBackend{currentDockerContext: dockercontext.Current}
 	}
 	portAllocator := opts.PortAllocator
 	if portAllocator == nil {
 		portAllocator = ephemeralPortAllocator{}
 	}
-	return &CLI{runner: runner, portAllocator: portAllocator}
+	return &CLI{backend: backend, portAllocator: portAllocator}
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
 	network := networkName(blueprint)
-	if err := c.runner.Run(ctx, "docker", "network", "create", network); err != nil {
+	if err := c.backend.EnsureNetwork(ctx, network); err != nil {
 		return err
 	}
 	for _, dep := range plan.Dependencies {
 		for _, volume := range volumeNames(dep.Volumes) {
-			if err := c.runner.Run(ctx, "docker", "volume", "create", volume); err != nil {
+			if err := c.backend.EnsureVolume(ctx, volume); err != nil {
 				return err
 			}
 		}
 		for _, name := range containerNames(blueprint, dep, plan.Targets) {
-			args, err := c.dockerRunArgs(ctx, network, name, dep)
+			spec, err := c.containerSpec(ctx, network, name, dep)
 			if err != nil {
 				return err
 			}
-			if err := c.runner.Run(ctx, "docker", args...); err != nil {
+			if err := c.backend.RunContainer(ctx, spec); err != nil {
 				return err
 			}
 		}
@@ -71,31 +91,136 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
 	for _, dep := range plan.Dependencies {
 		for _, name := range containerNames(blueprint, dep, plan.Targets) {
-			if err := c.runner.Run(ctx, "docker", "rm", "-f", name); err != nil && !isMissingDockerResource(err) {
+			if err := c.backend.RemoveContainer(ctx, name); err != nil && !isMissingDockerResource(err) {
 				return err
 			}
 		}
 	}
-	if err := c.runner.Run(ctx, "docker", "network", "rm", networkName(blueprint)); err != nil && !isMissingDockerResource(err) {
+	if err := c.backend.RemoveNetwork(ctx, networkName(blueprint)); err != nil && !isMissingDockerResource(err) {
 		return err
 	}
 	return nil
 }
 
-type osRunner struct{}
+type sdkBackend struct {
+	currentDockerContext func() (string, error)
+}
 
-func (osRunner) Run(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	data, err := cmd.CombinedOutput()
+func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) error {
+	cli, err := b.client(ctx)
 	if err != nil {
-		return CommandError{
-			Name:   name,
-			Args:   args,
-			Err:    err,
-			Output: strings.TrimSpace(string(data)),
-		}
+		return err
+	}
+	defer cli.Close()
+
+	if _, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err == nil {
+		return nil
+	} else if !isMissingDockerResource(err) {
+		return errors.Wrapf(err, "find docker network %s", name)
+	}
+	if _, err := sdknetwork.New(ctx, sdknetwork.WithClient(cli), sdknetwork.WithName(name)); err == nil {
+		return nil
+	} else if !isExistingDockerNetwork(err) {
+		return errors.Wrapf(err, "create docker network %s", name)
+	}
+	if _, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err != nil {
+		return errors.Wrapf(err, "find existing docker network %s", name)
 	}
 	return nil
+}
+
+func (b sdkBackend) EnsureVolume(ctx context.Context, name string) error {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	if _, err := sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
+		return nil
+	} else if !isMissingDockerResource(err) {
+		return errors.Wrapf(err, "find docker volume %s", name)
+	}
+	if _, err := sdkvolume.New(ctx, sdkvolume.WithClient(cli), sdkvolume.WithName(name)); err != nil && !isExistingDockerVolume(err) {
+		return errors.Wrapf(err, "create docker volume %s", name)
+	}
+	return nil
+}
+
+func (b sdkBackend) RunContainer(ctx context.Context, spec ContainerSpec) error {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	opts := []sdkcontainer.ContainerCustomizer{
+		sdkcontainer.WithClient(cli),
+		sdkcontainer.WithName(spec.Name),
+		sdkcontainer.WithImage(spec.Image),
+		sdkcontainer.WithNetworkName(nil, spec.Network),
+	}
+	if len(spec.Env) > 0 {
+		opts = append(opts, sdkcontainer.WithEnv(spec.Env))
+	}
+	if len(spec.Ports) > 0 {
+		opts = append(opts, sdkcontainer.WithExposedPorts(spec.Ports...))
+	}
+	if len(spec.Volumes) > 0 {
+		opts = append(opts, sdkcontainer.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
+			hostConfig.Binds = append(hostConfig.Binds, spec.Volumes...)
+		}))
+	}
+	if _, err := sdkcontainer.Run(ctx, opts...); err != nil {
+		return errors.Wrapf(err, "run docker container %s", spec.Name)
+	}
+	return nil
+}
+
+func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	found, err := cli.FindContainerByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	if _, err := cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
+		return errors.Wrapf(err, "remove docker container %s", name)
+	}
+	return nil
+}
+
+func (b sdkBackend) RemoveNetwork(ctx context.Context, name string) error {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+
+	found, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli))
+	if err != nil {
+		return err
+	}
+	if _, err := cli.NetworkRemove(ctx, found.ID, client.NetworkRemoveOptions{}); err != nil {
+		return errors.Wrapf(err, "remove docker network %s", name)
+	}
+	return nil
+}
+
+func (b sdkBackend) client(ctx context.Context) (sdkclient.SDKClient, error) {
+	currentDockerContext := b.currentDockerContext
+	if currentDockerContext == nil {
+		currentDockerContext = dockercontext.Current
+	}
+	dockerContext, err := currentDockerContext()
+	if err != nil {
+		return nil, errors.Wrap(err, "resolve current docker context")
+	}
+	return sdkclient.New(ctx, sdkclient.WithDockerContext(dockerContext))
 }
 
 type ephemeralPortAllocator struct{}
@@ -114,58 +239,57 @@ func (ephemeralPortAllocator) Allocate(ctx context.Context) (int, error) {
 	return addr.Port, nil
 }
 
-type CommandError struct {
-	Name   string
-	Args   []string
-	Err    error
-	Output string
-}
-
-func (e CommandError) Error() string {
-	return fmt.Sprintf("%s %s failed: %v: %s", e.Name, strings.Join(e.Args, " "), e.Err, e.Output)
-}
-
 func isMissingDockerResource(err error) bool {
-	commandErr, ok := err.(CommandError)
-	if !ok {
-		return false
+	if errdefs.IsNotFound(err) {
+		return true
 	}
-	output := strings.ToLower(commandErr.Output)
+	output := strings.ToLower(err.Error())
 	return strings.Contains(output, "no such container") ||
 		strings.Contains(output, "no such network") ||
-		strings.Contains(output, "not found")
+		strings.Contains(output, "no such volume") ||
+		strings.Contains(output, "no networks found") ||
+		(strings.Contains(output, "container ") && strings.Contains(output, " not found")) ||
+		(strings.Contains(output, "network ") && strings.Contains(output, " not found")) ||
+		(strings.Contains(output, "volume ") && strings.Contains(output, " not found"))
+}
+
+func isExistingDockerNetwork(err error) bool {
+	output := strings.ToLower(err.Error())
+	return strings.Contains(output, "network") && strings.Contains(output, "already exists")
+}
+
+func isExistingDockerVolume(err error) bool {
+	output := strings.ToLower(err.Error())
+	return strings.Contains(output, "volume") && strings.Contains(output, "already exists")
 }
 
 func networkName(blueprint string) string {
 	return "rpm-" + sanitize(blueprint)
 }
 
-func (c *CLI) dockerRunArgs(ctx context.Context, network string, name string, dep envstarlark.Dependency) ([]string, error) {
-	args := []string{"run", "--detach", "--name", name, "--network", network}
-	envKeys := make([]string, 0, len(dep.Env))
-	for key := range dep.Env {
-		envKeys = append(envKeys, key)
-	}
-	sort.Strings(envKeys)
-	for _, key := range envKeys {
-		value := dep.Env[key]
-		args = append(args, "--env", key+"="+value)
-	}
+func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency) (ContainerSpec, error) {
 	ports, err := c.publishPorts(ctx, dep.Ports)
 	if err != nil {
-		return nil, err
+		return ContainerSpec{}, err
 	}
-	for _, port := range ports {
-		args = append(args, "--publish", port)
+	volumes := dep.Volumes
+	if len(volumes) > 0 {
+		volumes = append([]string{}, dep.Volumes...)
 	}
-	for _, volume := range dep.Volumes {
-		args = append(args, "--volume", volume)
-	}
-	args = append(args, dep.Image)
-	return args, nil
+	return ContainerSpec{
+		Name:    name,
+		Image:   dep.Image,
+		Network: network,
+		Env:     dep.Env,
+		Ports:   ports,
+		Volumes: volumes,
+	}, nil
 }
 
 func (c *CLI) publishPorts(ctx context.Context, ports []string) ([]string, error) {
+	if len(ports) == 0 {
+		return nil, nil
+	}
 	if len(ports) != 1 || !singleContainerPort(ports[0]) {
 		return append([]string{}, ports...), nil
 	}

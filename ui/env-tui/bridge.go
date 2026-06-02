@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
@@ -46,6 +47,8 @@ type Bridge struct {
 	stderr   io.Writer
 }
 
+const bridgeGracefulShutdownTimeout = 5 * time.Second
+
 func NewBridge(stdout io.Writer, stderr io.Writer) *Bridge {
 	return &Bridge{stdout: stdout, stderr: stderr}
 }
@@ -61,7 +64,7 @@ func (b *Bridge) Run(ctx context.Context, events <-chan envruntime.Event, contro
 	}
 	defer cleanup()
 
-	cmd := exec.CommandContext(ctx, nodePath, scriptPath)
+	cmd := exec.Command(nodePath, scriptPath)
 	eventReader, eventWriter, err := os.Pipe()
 	if err != nil {
 		return err
@@ -75,7 +78,7 @@ func (b *Bridge) Run(ctx context.Context, events <-chan envruntime.Event, contro
 	}
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = b.stderr
-	if err := cmd.Start(); err != nil {
+	if err = cmd.Start(); err != nil {
 		return err
 	}
 	eventReader.Close()
@@ -91,30 +94,42 @@ func (b *Bridge) Run(ctx context.Context, events <-chan envruntime.Event, contro
 
 	select {
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = eventWriter.Close()
+		_ = gracefulWait(cmd)
 		return nil
-	case err := <-actionErr:
+	case err = <-actionErr:
 		if err != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			_ = eventWriter.Close()
+			_ = gracefulWait(cmd)
 			return err
 		}
-		_ = cmd.Process.Kill()
-		return waitAfterAction(cmd)
-	case err := <-encodeErr:
+		_ = eventWriter.Close()
+		return gracefulWait(cmd)
+	case err = <-encodeErr:
 		if err != nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			_ = eventWriter.Close()
+			_ = gracefulWait(cmd)
 			return err
 		}
-		_ = cmd.Process.Kill()
-		return waitAfterAction(cmd)
+		return gracefulWait(cmd)
 	}
 }
 
-func waitAfterAction(cmd *exec.Cmd) error {
-	err := cmd.Wait()
+func gracefulWait(cmd *exec.Cmd) error {
+	waitErr := make(chan error, 1)
+	go func() {
+		waitErr <- cmd.Wait()
+	}()
+	select {
+	case err := <-waitErr:
+		return ignoreSignaledWait(err, cmd)
+	case <-time.After(bridgeGracefulShutdownTimeout):
+		_ = cmd.Process.Kill()
+		return ignoreSignaledWait(<-waitErr, cmd)
+	}
+}
+
+func ignoreSignaledWait(err error, cmd *exec.Cmd) error {
 	if err == nil {
 		return nil
 	}
