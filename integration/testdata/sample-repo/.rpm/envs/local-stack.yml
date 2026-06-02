@@ -3,11 +3,10 @@ name: local-stack
 live_reload:
     enabled: true
     debounce: 100ms
-pre:
+before:
     - go-app:prepare
-    - go-app:scripts/pre.sh
-    - |
-      echo "PRE_INLINE=$REPO_ROOT"
+    - go-app:pre_file
+    - go-app:pre_inline
 targets:
     - ref: go-app:echo-123
       reload: true

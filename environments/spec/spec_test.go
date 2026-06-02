@@ -95,7 +95,7 @@ targets:
 	assert.Equal(t, []string{filepath.Join(bundleRoot, ".env"), filepath.Join(bundleRoot, ".env.local")}, spec.ResolveDotenvFiles(repoRoot, bundle, target))
 }
 
-func TestResolvePreScriptsReuseTargetAndBundleContext(t *testing.T) {
+func TestResolveBeforeTargetsReuseTargetContext(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
 shell: /bin/sh
@@ -111,6 +111,8 @@ env:
   variables:
     BUNDLE_VAR: bundle
 targets:
+  - name: serve
+    cmd: echo serve
   - name: migrate
     env:
       TARGET_VAR: target
@@ -124,22 +126,18 @@ targets:
 	blueprint := &models.EnvironmentBlueprint{
 		Name:      "local",
 		Variables: map[string]string{"STACK_VAR": "stack"},
-		Pre: []models.EnvironmentPreScript{
-			{Ref: "api:migrate"},
-			{Ref: "api:scripts/bootstrap.sh"},
-			{Ref: "/scripts/repo.sh"},
-			{Ref: "echo inline\n"},
-		},
+		Before:    []string{"api:migrate"},
+		Targets:   []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
 	}
 
 	resolved, err := spec.Resolve(repo, blueprint)
 
 	require.NoError(t, err)
-	require.Len(t, resolved.PreScripts, 4)
-	assert.Equal(t, "api:migrate", resolved.PreScripts[0].Ref)
-	assert.Equal(t, "echo migrate", resolved.PreScripts[0].Command)
-	assert.Equal(t, filepath.Join(bundleRoot, "cmd"), resolved.PreScripts[0].WorkingDir)
-	targetEnv := envMap(resolved.PreScripts[0].Env)
+	require.Len(t, resolved.BeforeTargets, 1)
+	assert.Equal(t, "api:migrate", resolved.BeforeTargets[0].Ref)
+	assert.Equal(t, "echo migrate", resolved.BeforeTargets[0].Command)
+	assert.Equal(t, filepath.Join(bundleRoot, "cmd"), resolved.BeforeTargets[0].WorkingDir)
+	targetEnv := envMap(resolved.BeforeTargets[0].Env)
 	assert.Equal(t, "global", targetEnv["GLOBAL_VAR"])
 	assert.Equal(t, repoRoot, targetEnv["REPO_ROOT"])
 	assert.Equal(t, bundleRoot, targetEnv["BUNDLE_ROOT"])
@@ -147,21 +145,53 @@ targets:
 	assert.Equal(t, "target", targetEnv["TARGET_VAR"])
 	assert.Equal(t, "stack", targetEnv["STACK_VAR"])
 	assert.Equal(t, "dotenv", targetEnv["FROM_DOTENV"])
+	assert.Equal(t, []spec.RuntimeUnit{
+		{Id: "api:migrate", Kind: "before"},
+		{Id: "api:serve", Kind: "target"},
+	}, resolved.RuntimeUnits)
+}
 
-	assert.Equal(t, "api:scripts/bootstrap.sh", resolved.PreScripts[1].Ref)
-	assert.Equal(t, bundleRoot, resolved.PreScripts[1].WorkingDir)
-	assert.Contains(t, resolved.PreScripts[1].Command, filepath.Join(bundleRoot, "scripts", "bootstrap.sh"))
-	bundleEnv := envMap(resolved.PreScripts[1].Env)
-	assert.Equal(t, "bundle", bundleEnv["BUNDLE_VAR"])
-	assert.Equal(t, "stack", bundleEnv["STACK_VAR"])
+func TestResolveRejectsInvalidBeforeTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		before  []string
+		targets []models.EnvironmentTarget
+		message string
+	}{
+		{
+			name:    "unknown",
+			before:  []string{"api:missing"},
+			targets: []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
+			message: "unknown before target ref",
+		},
+		{
+			name:    "duplicate",
+			before:  []string{"api:migrate", "api:migrate"},
+			targets: []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
+			message: "duplicate before target ref",
+		},
+		{
+			name:    "overlap",
+			before:  []string{"api:serve"},
+			targets: []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
+			message: "is also listed in targets",
+		},
+	}
 
-	assert.Equal(t, "/scripts/repo.sh", resolved.PreScripts[2].Ref)
-	assert.Equal(t, repoRoot, resolved.PreScripts[2].WorkingDir)
-	assert.Contains(t, resolved.PreScripts[2].Command, filepath.Join(repoRoot, "scripts", "repo.sh"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+			writeBundleWithTargets(t, repoRoot, "api", "serve", "migrate")
+			repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+			blueprint := &models.EnvironmentBlueprint{Name: "local", Before: tt.before, Targets: tt.targets}
 
-	assert.Equal(t, "pre:inline:4", resolved.PreScripts[3].Ref)
-	assert.Equal(t, "echo inline\n", resolved.PreScripts[3].Command)
-	assert.Equal(t, repoRoot, resolved.PreScripts[3].WorkingDir)
+			_, err := spec.Resolve(repo, blueprint)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.message)
+		})
+	}
 }
 
 func TestResolveSortsEnvironmentTargets(t *testing.T) {
@@ -235,6 +265,17 @@ func writeBundle(t *testing.T, repoRoot string, name string, envValue string) {
 	bundleRoot := filepath.Join(repoRoot, name)
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte("name: "+name+"\nenv:\n  NAME: "+envValue+"\ntargets:\n  - name: serve\n    cmd: echo serve\n"), 0644))
+}
+
+func writeBundleWithTargets(t *testing.T, repoRoot string, name string, targets ...string) {
+	t.Helper()
+	bundleRoot := filepath.Join(repoRoot, name)
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	content := "name: " + name + "\ntargets:\n"
+	for _, target := range targets {
+		content += "  - name: " + target + "\n    cmd: echo " + target + "\n"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(content), 0644))
 }
 
 func writeBundleWithReload(t *testing.T, repoRoot string, name string, reload bool) {

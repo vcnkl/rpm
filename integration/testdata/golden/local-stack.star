@@ -34,23 +34,23 @@ rpm_dependency(
     volumes = [],
 )
 
-rpm_pre(
+rpm_before_target(
     ref = "go-app:prepare",
     command = "echo \"PRE_TARGET=$BUNDLE_ROOT\"",
     workdir = "<repo>/apps/go-app",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
-rpm_pre(
-    ref = "go-app:scripts/pre.sh",
-    command = ". \"<repo>/apps/go-app/scripts/pre.sh\"",
+rpm_before_target(
+    ref = "go-app:pre_file",
+    command = ". \"$BUNDLE_ROOT/scripts/pre.sh\"",
     workdir = "<repo>/apps/go-app",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
+    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
-rpm_pre(
-    ref = "pre:inline:3",
-    command = "echo \"PRE_INLINE=$REPO_ROOT\"\n",
+rpm_before_target(
+    ref = "go-app:pre_inline",
+    command = "echo \"PRE_INLINE=$REPO_ROOT\"",
     workdir = "<repo>",
-    env = {"GLOBAL_VAR": "global_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
+    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
 
 rpm_target(
@@ -97,5 +97,5 @@ rpm_watch(
 )
 
 rpm_run(
-    order = ["go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
+    order = ["go-app:pre_file", "go-app:pre_inline", "go-app:prepare", "go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
 )

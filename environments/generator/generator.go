@@ -45,15 +45,15 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 		buf.WriteByte('\n')
 	}
 
-	for _, pre := range env.PreScripts {
-		writeCall(&buf, "rpm_pre", []field{
-			{name: "ref", value: quote(pre.Ref)},
-			{name: "command", value: quote(pre.Command)},
-			{name: "workdir", value: quote(pre.WorkingDir)},
-			{name: "env", value: envDict(pre.Env)},
+	for _, before := range env.BeforeTargets {
+		writeCall(&buf, "rpm_before_target", []field{
+			{name: "ref", value: quote(before.Ref)},
+			{name: "command", value: quote(before.Command)},
+			{name: "workdir", value: quote(before.WorkingDir)},
+			{name: "env", value: envDict(before.Env)},
 		})
 	}
-	if len(env.PreScripts) > 0 {
+	if len(env.BeforeTargets) > 0 {
 		buf.WriteByte('\n')
 	}
 

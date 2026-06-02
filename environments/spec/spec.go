@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -14,14 +13,14 @@ import (
 )
 
 type ResolvedEnvironment struct {
-	Name         string
-	Variables    []EnvVar
-	Bundles      []Bundle
-	PreScripts   []PreScript
-	Targets      []Target
-	Dependencies []Dependency
-	RuntimeUnits []RuntimeUnit
-	ReloadPolicy models.ReloadPolicy
+	Name          string
+	Variables     []EnvVar
+	Bundles       []Bundle
+	BeforeTargets []BeforeTarget
+	Targets       []Target
+	Dependencies  []Dependency
+	RuntimeUnits  []RuntimeUnit
+	ReloadPolicy  models.ReloadPolicy
 }
 
 type Bundle struct {
@@ -41,7 +40,7 @@ type Target struct {
 	Dotenv      Dotenv
 }
 
-type PreScript struct {
+type BeforeTarget struct {
 	Ref        string
 	Command    string
 	WorkingDir string
@@ -88,33 +87,56 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	}
 
 	bundleSeen := make(map[string]bool)
-	for i, pre := range blueprint.Pre {
-		script, err := ResolvePreScript(repo, blueprint, pre, i)
+	addBundle := func(bundle *models.Bundle) {
+		if bundleSeen[bundle.Name] {
+			return
+		}
+		resolved.Bundles = append(resolved.Bundles, Bundle{
+			Name: bundle.Name,
+			Path: filepath.Join(repo.RepoRoot(), bundle.Path),
+			Env:  envVars(bundle.Env),
+		})
+		bundleSeen[bundle.Name] = true
+		for _, dep := range bundle.Dependencies {
+			ref := bundle.Name + ":" + dep.Name
+			if dependencyIncluded(blueprint.DependencyPolicy, ref) {
+				resolved.Dependencies = append(resolved.Dependencies, dependency(bundle.Name, dep))
+			}
+		}
+	}
+
+	targetSeen := make(map[string]bool)
+	for _, bpTarget := range blueprint.Targets {
+		targetSeen[bpTarget.Ref] = true
+	}
+	beforeSeen := make(map[string]bool)
+	for _, ref := range blueprint.Before {
+		if beforeSeen[ref] {
+			return nil, errors.Errorf("duplicate before target ref %q", ref)
+		}
+		if targetSeen[ref] {
+			return nil, errors.Errorf("before target %q is also listed in targets", ref)
+		}
+		beforeSeen[ref] = true
+		target, err := ResolveBeforeTarget(repo, blueprint, ref)
 		if err != nil {
 			return nil, err
 		}
-		resolved.PreScripts = append(resolved.PreScripts, script)
+		targetConfig, err := repo.ResolveTarget(ref)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unknown before target ref %q", ref)
+		}
+		addBundle(repo.Bundles()[targetConfig.BundleName])
+		resolved.BeforeTargets = append(resolved.BeforeTargets, target)
 	}
+
 	for _, bpTarget := range blueprint.Targets {
 		target, err := repo.ResolveTarget(bpTarget.Ref)
 		if err != nil {
 			return nil, err
 		}
 		bundle := repo.Bundles()[target.BundleName]
-		if !bundleSeen[bundle.Name] {
-			resolved.Bundles = append(resolved.Bundles, Bundle{
-				Name: bundle.Name,
-				Path: filepath.Join(repo.RepoRoot(), bundle.Path),
-				Env:  envVars(bundle.Env),
-			})
-			bundleSeen[bundle.Name] = true
-			for _, dep := range bundle.Dependencies {
-				ref := bundle.Name + ":" + dep.Name
-				if dependencyIncluded(blueprint.DependencyPolicy, ref) {
-					resolved.Dependencies = append(resolved.Dependencies, dependency(bundle.Name, dep))
-				}
-			}
-		}
+		addBundle(bundle)
 
 		reload := false
 		if blueprint.ReloadPolicy.Enabled {
@@ -152,6 +174,9 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	sort.Slice(resolved.Dependencies, func(i, j int) bool {
 		return resolved.Dependencies[i].Ref < resolved.Dependencies[j].Ref
 	})
+	for _, before := range resolved.BeforeTargets {
+		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: before.Ref, Kind: "before"})
+	}
 	for _, target := range resolved.Targets {
 		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: target.Ref, Kind: "target"})
 	}
@@ -172,49 +197,17 @@ func ResolveWorkingDir(repoRoot string, target *models.Target) string {
 	return rpmexec.ResolveWorkDir(repoRoot, target)
 }
 
-func ResolvePreScript(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, pre models.EnvironmentPreScript, index int) (PreScript, error) {
-	ref := strings.TrimSpace(pre.Ref)
-	if inlinePreScript(ref) {
-		return PreScript{
-			Ref:        preScriptId("inline", index),
-			Command:    pre.Ref,
-			WorkingDir: repo.RepoRoot(),
-			Env:        ResolveRepoEnv(repo, blueprint),
-		}, nil
+func ResolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, ref string) (BeforeTarget, error) {
+	target, err := repo.ResolveTarget(ref)
+	if err != nil {
+		return BeforeTarget{}, errors.Wrapf(err, "unknown before target ref %q", ref)
 	}
-	if strings.HasPrefix(ref, "/") {
-		path := filepath.Join(repo.RepoRoot(), strings.TrimPrefix(ref, "/"))
-		return PreScript{
-			Ref:        ref,
-			Command:    fileCommand(path),
-			WorkingDir: repo.RepoRoot(),
-			Env:        ResolveRepoEnv(repo, blueprint),
-		}, nil
-	}
-	if target, err := repo.ResolveTarget(ref); err == nil {
-		bundle := repo.Bundles()[target.BundleName]
-		return PreScript{
-			Ref:        target.ID(),
-			Command:    target.Cmd,
-			WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
-			Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
-		}, nil
-	}
-	bundleName, file, ok := strings.Cut(ref, ":")
-	if !ok || bundleName == "" || file == "" {
-		return PreScript{}, errors.Errorf("invalid pre script %q", pre.Ref)
-	}
-	bundle, ok := repo.Bundles()[bundleName]
-	if !ok {
-		return PreScript{}, errors.Errorf("unknown pre script bundle %q", bundleName)
-	}
-	bundleRoot := filepath.Join(repo.RepoRoot(), bundle.Path)
-	path := filepath.Join(bundleRoot, file)
-	return PreScript{
-		Ref:        ref,
-		Command:    fileCommand(path),
-		WorkingDir: bundleRoot,
-		Env:        ResolveBundleEnv(repo, bundle, blueprint),
+	bundle := repo.Bundles()[target.BundleName]
+	return BeforeTarget{
+		Ref:        target.ID(),
+		Command:    target.Cmd,
+		WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
+		Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
 	}, nil
 }
 
@@ -340,18 +333,6 @@ func dependencyIncluded(policy models.DependencyPolicy, ref string) bool {
 		}
 	}
 	return false
-}
-
-func preScriptId(kind string, index int) string {
-	return "pre:" + kind + ":" + strconv.Itoa(index+1)
-}
-
-func fileCommand(path string) string {
-	return ". " + strconv.Quote(path)
-}
-
-func inlinePreScript(ref string) bool {
-	return strings.ContainsAny(ref, "\n\r \t")
 }
 
 func appendEnvMap(env []string, values map[string]string) []string {

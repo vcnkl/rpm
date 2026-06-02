@@ -18,15 +18,18 @@ type SelectionRequest struct {
 }
 
 type SelectionItem struct {
-	Ref      string `json:"ref,omitempty"`
-	Label    string `json:"label"`
-	Detail   string `json:"detail,omitempty"`
-	Group    string `json:"group,omitempty"`
-	Tier     int    `json:"tier,omitempty"`
-	Selected bool   `json:"selected,omitempty"`
-	Defaults bool   `json:"defaults,omitempty"`
-	Header   bool   `json:"header,omitempty"`
-	Muted    bool   `json:"muted,omitempty"`
+	Ref        string `json:"ref,omitempty"`
+	Label      string `json:"label"`
+	Detail     string `json:"detail,omitempty"`
+	Group      string `json:"group,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Selected   bool   `json:"selected,omitempty"`
+	Defaults   bool   `json:"defaults,omitempty"`
+	Header     bool   `json:"header,omitempty"`
+	Muted      bool   `json:"muted,omitempty"`
+	Expanded   bool   `json:"expanded,omitempty"`
+	Expandable bool   `json:"expandable,omitempty"`
+	Hidden     bool   `json:"hidden,omitempty"`
 }
 
 type SelectionResponse struct {

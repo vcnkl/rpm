@@ -39,6 +39,31 @@ func TestRunCreateNonInteractiveRequiresNameAndTargets(t *testing.T) {
 	assert.ErrorIs(t, envcreate.RunCreate(repo, envcreate.CreateOptions{Name: "local", NonInteractive: true}), envcreate.ErrMissingTargets)
 }
 
+func TestRunCreateAndEditNonInteractiveBeforeTargets(t *testing.T) {
+	repo := newTestRepo(t)
+
+	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
+		Name:           "local-stack",
+		Targets:        []string{"go-app:echo-123"},
+		Before:         []string{"go-app:web"},
+		ReloadEnabled:  true,
+		NonInteractive: true,
+	})
+	require.NoError(t, err)
+
+	err = envcreate.RunEdit(repo, envcreate.EditOptions{
+		Name:           "local-stack",
+		AddBefore:      []string{"python-app:echo-456"},
+		RemoveBefore:   []string{"go-app:web"},
+		NonInteractive: true,
+	})
+	require.NoError(t, err)
+
+	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"python-app:echo-456"}, blueprint.Before)
+}
+
 func TestRunCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
 	repo := newTestRepo(t)
 
@@ -98,7 +123,7 @@ func TestRunCreateInteractiveCanGloballyDisableLiveReload(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123\ny\nn\n"),
+		In:   strings.NewReader("go-app:echo-123\n\ny\nn\n"),
 	})
 
 	require.NoError(t, err)

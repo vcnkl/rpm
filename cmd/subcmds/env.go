@@ -43,6 +43,10 @@ func envCreateCmd() *cli.Command {
 				Name:  "target",
 				Usage: "Add target ref to the blueprint",
 			},
+			&cli.StringSliceFlag{
+				Name:  "before",
+				Usage: "Add target ref to run before environment startup",
+			},
 			&cli.BoolFlag{
 				Name:  "deps",
 				Usage: "Enable dependencies for selected target bundles",
@@ -74,6 +78,7 @@ func envCreateCmd() *cli.Command {
 				reload = true
 			}
 			targets := append(ctx.StringSlice("target"), trailingStrings["target"]...)
+			before := append(ctx.StringSlice("before"), trailingStrings["before"]...)
 			targetReload := append(ctx.StringSlice("target-reload"), trailingStrings["target-reload"]...)
 			targetReloadValues, err := parseBoolAssignments(targetReload)
 			if err != nil {
@@ -82,6 +87,7 @@ func envCreateCmd() *cli.Command {
 			err = envcreate.RunCreate(cfg, envcreate.CreateOptions{
 				Name:           name,
 				Targets:        targets,
+				Before:         before,
 				Dependencies:   ctx.Bool("deps") || trailingBools["deps"],
 				ReloadEnabled:  reload,
 				TargetReload:   targetReloadValues,
@@ -113,6 +119,14 @@ func envEditCmd() *cli.Command {
 			&cli.StringSliceFlag{
 				Name:  "remove-target",
 				Usage: "Remove target ref from the blueprint",
+			},
+			&cli.StringSliceFlag{
+				Name:  "add-before",
+				Usage: "Add target ref to run before environment startup",
+			},
+			&cli.StringSliceFlag{
+				Name:  "remove-before",
+				Usage: "Remove target ref from environment startup before targets",
 			},
 			&cli.BoolFlag{
 				Name:  "deps",
@@ -171,6 +185,8 @@ func envEditCmd() *cli.Command {
 				Name:           name,
 				AddTargets:     append(ctx.StringSlice("add-target"), trailingStrings["add-target"]...),
 				RemoveTargets:  append(ctx.StringSlice("remove-target"), trailingStrings["remove-target"]...),
+				AddBefore:      append(ctx.StringSlice("add-before"), trailingStrings["add-before"]...),
+				RemoveBefore:   append(ctx.StringSlice("remove-before"), trailingStrings["remove-before"]...),
 				Dependencies:   deps,
 				ReloadEnabled:  reload,
 				TargetReload:   targetReloadValues,
@@ -379,7 +395,7 @@ func parseTrailingFlags(args []string) (string, map[string][]string, map[string]
 			continue
 		}
 		switch flag {
-		case "target", "target-reload", "add-target", "remove-target", "include-dep", "exclude-dep", "out":
+		case "target", "before", "target-reload", "add-target", "remove-target", "add-before", "remove-before", "include-dep", "exclude-dep", "out":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 				return "", nil, nil, fmt.Errorf("--%s requires a value", flag)
 			}

@@ -15,7 +15,7 @@ import (
 )
 
 func TestLoadBlueprint(t *testing.T) {
-	repo := newTestRepo(t)
+	repo := newTestRepoWithTargets(t, "serve", "migrate")
 	writeBlueprint(t, repo.RepoRoot(), "local", `
 version: 1
 name: local
@@ -28,12 +28,8 @@ targets:
       PORT: "8080"
 variables:
   LOG_LEVEL: debug
-pre:
-  - api:serve
-  - api:scripts/bootstrap.sh
-  - /scripts/repo.sh
-  - |
-    echo inline
+before:
+  - api:migrate
 `)
 
 	blueprint, err := envconfig.LoadBlueprint(repo, "local")
@@ -46,12 +42,7 @@ pre:
 	assert.Equal(t, "api:serve", blueprint.Targets[0].Ref)
 	assert.True(t, *blueprint.Targets[0].Reload)
 	assert.Equal(t, "8080", blueprint.Targets[0].Env["PORT"])
-	assert.Equal(t, []models.EnvironmentPreScript{
-		{Ref: "api:serve"},
-		{Ref: "api:scripts/bootstrap.sh"},
-		{Ref: "/scripts/repo.sh"},
-		{Ref: "echo inline\n"},
-	}, blueprint.Pre)
+	assert.Equal(t, []string{"api:migrate"}, blueprint.Before)
 }
 
 func TestLoadBlueprintUnknownFile(t *testing.T) {
@@ -154,7 +145,24 @@ targets:
 	}
 }
 
-func TestLoadBlueprintInvalidPreScript(t *testing.T) {
+func TestLoadBlueprintRejectsLegacyPre(t *testing.T) {
+	repo := newTestRepo(t)
+	writeBlueprint(t, repo.RepoRoot(), "legacy", `
+name: legacy
+targets:
+  - ref: api:serve
+pre:
+  - api:serve
+`)
+
+	_, err := envconfig.LoadBlueprint(repo, "legacy")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, envconfig.ErrUnsupportedPre))
+	assert.Contains(t, err.Error(), "pre is no longer supported; use before with existing target refs")
+}
+
+func TestLoadBlueprintInvalidBeforeTarget(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -166,10 +174,10 @@ func TestLoadBlueprintInvalidPreScript(t *testing.T) {
 name: empty
 targets:
   - ref: api:serve
-pre:
+before:
   - ""
 `,
-			message: "empty pre script",
+			message: "invalid blueprint before target ref",
 		},
 		{
 			name: "unqualified",
@@ -177,21 +185,21 @@ pre:
 name: unqualified
 targets:
   - ref: api:serve
-pre:
+before:
   - scripts/bootstrap.sh
 `,
-			message: "must be a target ref, bundle:path or /repo/path",
+			message: "invalid blueprint before target ref",
 		},
 		{
-			name: "unknown-bundle",
+			name: "unknown-target",
 			content: `
-name: unknown-bundle
+name: unknown-target
 targets:
   - ref: api:serve
-pre:
-  - missing:scripts/bootstrap.sh
+before:
+  - api:missing
 `,
-			message: "unknown bundle missing",
+			message: "unknown blueprint target ref",
 		},
 	}
 
@@ -203,8 +211,48 @@ pre:
 			_, err := envconfig.LoadBlueprint(repo, tt.name)
 
 			require.Error(t, err)
-			assert.True(t, errors.Is(err, envconfig.ErrInvalidPreScript))
 			assert.Contains(t, err.Error(), tt.message)
+		})
+	}
+}
+
+func TestLoadBlueprintRejectsBeforeDuplicateAndOverlap(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "duplicate",
+			content: `
+name: duplicate
+targets:
+  - ref: api:serve
+before:
+  - api:migrate
+  - api:migrate
+`,
+		},
+		{
+			name: "overlap",
+			content: `
+name: overlap
+targets:
+  - ref: api:serve
+before:
+  - api:serve
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTestRepoWithTargets(t, "serve", "migrate")
+			writeBlueprint(t, repo.RepoRoot(), tt.name, tt.content)
+
+			_, err := envconfig.LoadBlueprint(repo, tt.name)
+
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, envconfig.ErrDuplicateBlueprintRef))
 		})
 	}
 }
@@ -308,11 +356,7 @@ func TestMarshalBlueprintDeterministicYAML(t *testing.T) {
 			{Ref: "ts-app:web", Reload: &reloadTrue},
 			{Ref: "go-app:serve", Reload: &reloadFalse, Env: map[string]string{"APP_PORT": "8080", "LOG_LEVEL": "debug"}},
 		},
-		Pre: []models.EnvironmentPreScript{
-			{Ref: "go-app:migrate"},
-			{Ref: "go-app:scripts/bootstrap.sh"},
-			{Ref: "echo inline\n"},
-		},
+		Before: []string{"go-app:migrate"},
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: true,
 			Include: []string{"ts-app:mailhog", "go-app:postgres"},
@@ -329,11 +373,8 @@ name: local-stack
 live_reload:
     enabled: true
     debounce: 100ms
-pre:
+before:
     - go-app:migrate
-    - go-app:scripts/bootstrap.sh
-    - |
-      echo inline
 targets:
     - ref: go-app:serve
       reload: false
@@ -396,6 +437,19 @@ func newTestRepo(t *testing.T) *rootconfig.Config {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "api", "api", "serve")
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".rpm", "envs"), 0755))
+	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+}
+
+func newTestRepoWithTargets(t *testing.T, targets ...string) *rootconfig.Config {
+	t.Helper()
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	content := "name: api\ntargets:\n"
+	for _, target := range targets {
+		content += "  - name: " + target + "\n    cmd: echo " + target + "\n"
+	}
+	writeBundleContent(t, repoRoot, "api", content)
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".rpm", "envs"), 0755))
 	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 }

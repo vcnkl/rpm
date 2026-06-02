@@ -2,6 +2,7 @@ package create
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,9 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"context"
 	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/dag"
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/models"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
@@ -28,6 +27,7 @@ var (
 type CreateOptions struct {
 	Name           string
 	Targets        []string
+	Before         []string
 	Dependencies   bool
 	ReloadEnabled  bool
 	TargetReload   map[string]bool
@@ -40,6 +40,8 @@ type EditOptions struct {
 	Name           string
 	AddTargets     []string
 	RemoveTargets  []string
+	AddBefore      []string
+	RemoveBefore   []string
 	Dependencies   *bool
 	ReloadEnabled  *bool
 	TargetReload   map[string]bool
@@ -71,7 +73,7 @@ func createNonInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if len(opts.Targets) == 0 {
 		return ErrMissingTargets
 	}
-	blueprint, err := buildBlueprint(repo, opts.Name, opts.Targets, opts.ReloadEnabled, opts.TargetReload, opts.Dependencies)
+	blueprint, err := buildBlueprint(repo, opts.Name, opts.Targets, opts.Before, opts.ReloadEnabled, opts.TargetReload, opts.Dependencies)
 	if err != nil {
 		return err
 	}
@@ -82,7 +84,7 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if opts.Name == "" {
 		return ErrMissingBlueprintName
 	}
-	if len(opts.AddTargets) == 0 && len(opts.RemoveTargets) == 0 && opts.Dependencies == nil && opts.ReloadEnabled == nil && len(opts.TargetReload) == 0 && len(opts.IncludeDeps) == 0 && len(opts.ExcludeDeps) == 0 {
+	if len(opts.AddTargets) == 0 && len(opts.RemoveTargets) == 0 && len(opts.AddBefore) == 0 && len(opts.RemoveBefore) == 0 && opts.Dependencies == nil && opts.ReloadEnabled == nil && len(opts.TargetReload) == 0 && len(opts.IncludeDeps) == 0 && len(opts.ExcludeDeps) == 0 {
 		return ErrMissingEditChange
 	}
 
@@ -99,6 +101,16 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	}
 	for _, ref := range opts.RemoveTargets {
 		delete(targets, ref)
+	}
+	before := stringSet(blueprint.Before)
+	for _, ref := range opts.AddBefore {
+		if err := validateTargetRef(repo, ref); err != nil {
+			return err
+		}
+		before[ref] = true
+	}
+	for _, ref := range opts.RemoveBefore {
+		delete(before, ref)
 	}
 	if opts.ReloadEnabled != nil {
 		blueprint.ReloadPolicy.Enabled = *opts.ReloadEnabled
@@ -128,8 +140,12 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		blueprint.DependencyPolicy.Exclude = opts.ExcludeDeps
 	}
 	blueprint.Targets = targetSlice(targets)
+	blueprint.Before = beforeSlice(before)
 	if len(blueprint.Targets) == 0 {
 		return ErrMissingTargets
+	}
+	if err := validateBeforeRefs(repo, targetRefs(targets), blueprint.Before); err != nil {
+		return err
 	}
 	return envconfig.WriteBlueprint(repo, blueprint)
 }
@@ -155,11 +171,11 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if strings.TrimSpace(name) == "" {
 		return ErrMissingBlueprintName
 	}
-	graph, err := buildTargetGraph(repo)
+	targets, err := prompt.chooseTargets(repo.AllTargets(), nil)
 	if err != nil {
 		return err
 	}
-	targets, err := prompt.chooseTargets(repo.AllTargets(), graph, nil)
+	before, err := prompt.chooseBeforeTargets(repo.AllTargets(), targets, opts.Before)
 	if err != nil {
 		return err
 	}
@@ -172,7 +188,7 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if err != nil {
 		return err
 	}
-	blueprint, err := buildBlueprint(repo, name, targets, reload, nil, deps)
+	blueprint, err := buildBlueprint(repo, name, targets, before, reload, nil, deps)
 	if err != nil {
 		return err
 	}
@@ -193,12 +209,12 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		out = os.Stdout
 	}
 	prompt := newPrompt(in, out)
-	graph, err := buildTargetGraph(repo)
+	existingTargets := targetMap(blueprint.Targets)
+	targets, err := prompt.chooseTargets(repo.AllTargets(), targetRefs(existingTargets))
 	if err != nil {
 		return err
 	}
-	existingTargets := targetMap(blueprint.Targets)
-	targets, err := prompt.chooseTargets(repo.AllTargets(), graph, targetRefs(existingTargets))
+	before, err := prompt.chooseBeforeTargets(repo.AllTargets(), targets, blueprint.Before)
 	if err != nil {
 		return err
 	}
@@ -211,7 +227,7 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if err != nil {
 		return err
 	}
-	next, err := buildBlueprint(repo, blueprint.Name, targets, reload, nil, deps)
+	next, err := buildBlueprint(repo, blueprint.Name, targets, before, reload, nil, deps)
 	if err != nil {
 		return err
 	}
@@ -240,7 +256,7 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	return envconfig.WriteBlueprint(repo, next)
 }
 
-func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, reload bool, targetReload map[string]bool, deps bool) (*models.EnvironmentBlueprint, error) {
+func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, beforeRefs []string, reload bool, targetReload map[string]bool, deps bool) (*models.EnvironmentBlueprint, error) {
 	seen := make(map[string]bool)
 	targets := make([]models.EnvironmentTarget, 0, len(targetRefs))
 	for _, ref := range targetRefs {
@@ -268,14 +284,19 @@ func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, r
 	if len(targets) == 0 {
 		return nil, ErrMissingTargets
 	}
+	before, err := normalizeBeforeRefs(repo, targetRefs, beforeRefs)
+	if err != nil {
+		return nil, err
+	}
 	return &models.EnvironmentBlueprint{
 		Version:   1,
 		Name:      name,
 		Variables: map[string]string{},
+		Before:    before,
 		Targets:   targets,
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: deps,
-			Include: selectedDependencyRefs(repo, targetRefs, deps),
+			Include: selectedDependencyRefs(repo, append(append([]string{}, targetRefs...), before...), deps),
 			Exclude: []string{},
 		},
 		ReloadPolicy: models.ReloadPolicy{
@@ -283,6 +304,44 @@ func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, r
 			Debounce: "100ms",
 		},
 	}, nil
+}
+
+func normalizeBeforeRefs(repo *rootconfig.Config, targetRefs []string, beforeRefs []string) ([]string, error) {
+	seen := make(map[string]bool)
+	before := make([]string, 0, len(beforeRefs))
+	for _, ref := range beforeRefs {
+		if seen[ref] {
+			return nil, errors.Wrapf(envconfig.ErrDuplicateBlueprintRef, "%s", ref)
+		}
+		if err := validateTargetRef(repo, ref); err != nil {
+			return nil, err
+		}
+		seen[ref] = true
+		before = append(before, ref)
+	}
+	if err := validateBeforeRefs(repo, targetRefs, before); err != nil {
+		return nil, err
+	}
+	sort.Strings(before)
+	return before, nil
+}
+
+func validateBeforeRefs(repo *rootconfig.Config, targetRefs []string, beforeRefs []string) error {
+	targetSet := stringSet(targetRefs)
+	seen := make(map[string]bool)
+	for _, ref := range beforeRefs {
+		if targetSet[ref] {
+			return errors.Wrapf(envconfig.ErrDuplicateBlueprintRef, "%s is also listed in targets", ref)
+		}
+		if seen[ref] {
+			return errors.Wrapf(envconfig.ErrDuplicateBlueprintRef, "%s", ref)
+		}
+		seen[ref] = true
+		if err := validateTargetRef(repo, ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateTargetRef(repo *rootconfig.Config, ref string) error {
@@ -342,19 +401,6 @@ func dependencyRefs(repo *rootconfig.Config) []string {
 	return refs
 }
 
-func buildTargetGraph(repo *rootconfig.Config) (*dag.Graph, error) {
-	graph := dag.NewGraph()
-	for _, bundle := range repo.Bundles() {
-		for _, target := range bundle.Targets {
-			graph.AddTarget(target)
-		}
-	}
-	if err := graph.Resolve(repo.Bundles()); err != nil {
-		return nil, err
-	}
-	return graph, nil
-}
-
 func targetMap(targets []models.EnvironmentTarget) map[string]models.EnvironmentTarget {
 	result := make(map[string]models.EnvironmentTarget, len(targets))
 	for _, target := range targets {
@@ -381,6 +427,15 @@ func targetRefs(targets map[string]models.EnvironmentTarget) []string {
 	}
 	sort.Strings(refs)
 	return refs
+}
+
+func beforeSlice(refs map[string]bool) []string {
+	result := make([]string, 0, len(refs))
+	for ref := range refs {
+		result = append(result, ref)
+	}
+	sort.Strings(result)
+	return result
 }
 
 type prompt struct {
@@ -438,15 +493,16 @@ func (p prompt) askBool(label string, fallback bool) (bool, error) {
 	}
 }
 
-func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, selected []string) ([]string, error) {
+func (p prompt) chooseTargets(targets []*models.Target, selected []string) ([]string, error) {
 	if envtui.CanSelect(p.in, p.out) {
 		return envtui.Select(context.Background(), p.in, p.out, envtui.SelectionRequest{
 			Title:      "Select environment targets",
-			Items:      targetSelectItems(targets, graph, selected),
+			Items:      targetSelectItems(targets, selected),
 			RequireOne: true,
 		})
 	}
-	for i, target := range targets {
+	choices := runnableTargets(targets)
+	for i, target := range choices {
 		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
 	}
 	answer, err := p.ask("Targets (comma-separated numbers or refs)")
@@ -467,10 +523,10 @@ func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, select
 			continue
 		}
 		if index, err := strconv.Atoi(item); err == nil {
-			if index < 1 || index > len(targets) {
+			if index < 1 || index > len(choices) {
 				return nil, fmt.Errorf("target selection out of range: %d", index)
 			}
-			refs = append(refs, targets[index-1].ID())
+			refs = append(refs, choices[index-1].ID())
 			continue
 		}
 		if !targetByRef[item] {
@@ -479,6 +535,72 @@ func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, select
 		refs = append(refs, item)
 	}
 	return refs, nil
+}
+
+func (p prompt) chooseBeforeTargets(targets []*models.Target, mainRefs []string, selected []string) ([]string, error) {
+	if envtui.CanSelect(p.in, p.out) {
+		return envtui.Select(context.Background(), p.in, p.out, envtui.SelectionRequest{
+			Title: "Select targets to run before startup",
+			Items: beforeSelectItems(targets, mainRefs, selected),
+		})
+	}
+	mainSet := stringSet(mainRefs)
+	choices := make([]*models.Target, 0, len(targets))
+	for _, target := range targets {
+		if !mainSet[target.ID()] {
+			choices = append(choices, target)
+		}
+	}
+	sort.Slice(choices, func(i, j int) bool {
+		return choices[i].ID() < choices[j].ID()
+	})
+	for i, target := range choices {
+		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
+	}
+	answer, err := p.askDefault("Run before targets (comma-separated numbers or refs)", strings.Join(selected, ","))
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(answer) == "" {
+		return []string{}, nil
+	}
+	targetByRef := make(map[string]bool)
+	for _, target := range choices {
+		targetByRef[target.ID()] = true
+	}
+	var refs []string
+	for _, item := range strings.Split(answer, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if index, err := strconv.Atoi(item); err == nil {
+			if index < 1 || index > len(choices) {
+				return nil, fmt.Errorf("before target selection out of range: %d", index)
+			}
+			refs = append(refs, choices[index-1].ID())
+			continue
+		}
+		if !targetByRef[item] {
+			return nil, errors.Wrapf(envconfig.ErrUnknownBlueprintRef, "%s", item)
+		}
+		refs = append(refs, item)
+	}
+	sort.Strings(refs)
+	return refs, nil
+}
+
+func runnableTargets(targets []*models.Target) []*models.Target {
+	choices := make([]*models.Target, 0, len(targets))
+	for _, target := range targets {
+		if runnableEnvironmentTarget(target) {
+			choices = append(choices, target)
+		}
+	}
+	sort.Slice(choices, func(i, j int) bool {
+		return choices[i].ID() < choices[j].ID()
+	})
+	return choices
 }
 
 func (p prompt) chooseDependencies(label string, refs []string, selected []string) ([]string, error) {

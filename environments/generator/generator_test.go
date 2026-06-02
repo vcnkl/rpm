@@ -31,13 +31,15 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Ref: "z:postgres", Name: "postgres", Image: "postgres:16", Mode: models.DependencyInstanceModeShared, Ports: []string{"5433:5432", "5432:5432"}, Volumes: []string{"z:/z", "a:/a"}},
 			{Ref: "a:redis", Name: "redis", Image: "redis:7", Mode: models.DependencyInstanceModeDedicated},
 		},
-		PreScripts: []spec.PreScript{
+		BeforeTargets: []spec.BeforeTarget{
 			{Ref: "z:pre", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
 			{Ref: "a:pre", Command: "echo a", WorkingDir: "/repo/a", Env: []spec.EnvVar{{Name: "A", Value: "1"}}},
 		},
 		RuntimeUnits: []spec.RuntimeUnit{
 			{Id: "z:serve", Kind: "target"},
 			{Id: "a:redis", Kind: "dependency"},
+			{Id: "a:pre", Kind: "before"},
+			{Id: "z:pre", Kind: "before"},
 			{Id: "a:serve", Kind: "target"},
 			{Id: "z:postgres", Kind: "dependency"},
 		},
@@ -56,7 +58,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
 	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432"]`)
 	assert.Contains(t, string(first), `volumes = ["a:/a", "z:/z"]`)
-	assert.Contains(t, string(first), `order = ["a:redis", "z:postgres", "a:serve", "z:serve"]`)
+	assert.Contains(t, string(first), `order = ["a:pre", "z:pre", "a:redis", "z:postgres", "a:serve", "z:serve"]`)
 }
 
 func TestRenderGoldenLocalStack(t *testing.T) {

@@ -6,68 +6,73 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/models"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
-func TestTargetSelectItemsDefaultEnvSuffixes(t *testing.T) {
+func TestTargetSelectItemsGroupsRunnableTargetsByBundle(t *testing.T) {
 	targets := []*models.Target{
-		target("api", "build", nil),
-		target("api", "web_dev", nil),
-		target("worker", "jobs_serve", nil),
+		target("worker", "jobs_serve"),
+		target("api", "build"),
+		target("api", "web_dev"),
 	}
-	graph := graphFor(targets)
 
-	items := targetSelectItems(targets, graph, nil)
+	items := targetSelectItems(targets, nil)
 
+	assert.Equal(t, []string{"api", "api:web_dev", "worker", "worker:jobs_serve"}, labels(items))
 	assert.Equal(t, []string{"api:web_dev", "worker:jobs_serve"}, selectedRefs(items))
-	assert.Equal(t, "env candidates / tier 0", items[0].Label)
+	assert.True(t, items[0].Expandable)
+	assert.True(t, items[0].Expanded)
 }
 
 func TestTargetSelectItemsUseExistingSelectionForEdit(t *testing.T) {
 	targets := []*models.Target{
-		target("api", "build", nil),
-		target("api", "web_dev", nil),
+		target("api", "api_dev"),
+		target("worker", "jobs_serve"),
 	}
-	graph := graphFor(targets)
 
-	items := targetSelectItems(targets, graph, []string{"api:build"})
+	items := targetSelectItems(targets, []string{"worker:jobs_serve"})
 
-	assert.Equal(t, []string{"api:build"}, selectedRefs(items))
+	assert.Equal(t, []string{"worker:jobs_serve"}, selectedRefs(items))
 }
 
-func TestTargetSelectItemsTierByDependencyGraph(t *testing.T) {
+func TestBeforeSelectItemsShowOtherTargets(t *testing.T) {
 	targets := []*models.Target{
-		target("api", "web_dev", []string{":build"}),
-		target("api", "build", nil),
+		target("api", "api_dev"),
+		target("api", "migrate"),
+		target("worker", "jobs_serve"),
 	}
-	graph := graphFor(targets)
 
-	items := targetSelectItems(targets, graph, nil)
+	items := beforeSelectItems(targets, []string{"api:api_dev"}, []string{"api:migrate"})
 
-	tiers := map[string]int{}
-	for _, item := range items {
-		if !item.Header {
-			tiers[item.Ref] = item.Tier
-		}
-	}
-	assert.Equal(t, 0, tiers["api:build"])
-	assert.Equal(t, 1, tiers["api:web_dev"])
+	assert.Equal(t, []string{"api", "api:migrate", "worker", "worker:jobs_serve"}, labels(items))
+	assert.Equal(t, []string{"api:migrate"}, selectedRefs(items))
+	assert.Equal(t, "disabled", items[1].Status)
 }
 
 func TestDependencySelectItemsGroupByBundle(t *testing.T) {
 	items := dependencySelectItems([]string{"web:redis", "api:postgres"}, []string{"web:redis"})
 
-	assert.Equal(t, "api", items[0].Label)
-	assert.Equal(t, "web", items[2].Label)
+	assert.Equal(t, []string{"api", "api:postgres", "web", "web:redis"}, labels(items))
 	assert.Equal(t, []string{"web:redis"}, selectedRefs(items))
+}
+
+func labels(items []envtui.SelectionItem) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Ref != "" {
+			result = append(result, item.Ref)
+			continue
+		}
+		result = append(result, item.Label)
+	}
+	return result
 }
 
 func selectedRefs(items []envtui.SelectionItem) []string {
 	var refs []string
 	for _, item := range items {
-		if item.Selected && !item.Header {
+		if item.Selected && !item.Header && !item.Expandable {
 			refs = append(refs, item.Ref)
 		}
 	}
@@ -75,29 +80,10 @@ func selectedRefs(items []envtui.SelectionItem) []string {
 	return refs
 }
 
-func target(bundle string, name string, deps []string) *models.Target {
+func target(bundle string, name string) *models.Target {
 	return &models.Target{
 		Name:       name,
 		BundleName: bundle,
 		BundlePath: "apps/" + bundle,
-		Deps:       deps,
 	}
-}
-
-func graphFor(targets []*models.Target) *dag.Graph {
-	graph := dag.NewGraph()
-	bundles := map[string]*models.Bundle{}
-	for _, target := range targets {
-		graph.AddTarget(target)
-		bundle := bundles[target.BundleName]
-		if bundle == nil {
-			bundle = &models.Bundle{Name: target.BundleName}
-			bundles[target.BundleName] = bundle
-		}
-		bundle.Targets = append(bundle.Targets, target)
-	}
-	if err := graph.Resolve(bundles); err != nil {
-		panic(err)
-	}
-	return graph
 }

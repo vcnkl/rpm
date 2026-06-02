@@ -151,10 +151,10 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Zero(t, exitCode)
 	assert.Contains(t, output, `"type":"process_started","ref":"go-app:prepare"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:prepare"`)
-	assert.Contains(t, output, `"type":"process_started","ref":"go-app:scripts/pre.sh"`)
-	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:scripts/pre.sh"`)
-	assert.Contains(t, output, `"type":"process_started","ref":"pre:inline:3"`)
-	assert.Contains(t, output, `"type":"process_exited","ref":"pre:inline:3"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"go-app:pre_file"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:pre_file"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"go-app:pre_inline"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:pre_inline"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"go-app:echo-123"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:echo-123"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"python-app:echo-456"`)
@@ -167,8 +167,8 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Contains(t, output, "PRE_FILE=/workspace/apps/go-app")
 	assert.Contains(t, output, "PRE_INLINE=/workspace")
 	assert.Less(t, strings.Index(output, `"ref":"go-app:prepare"`), strings.Index(output, `"ref":"go-app:echo-123"`))
-	assert.Less(t, strings.Index(output, `"ref":"go-app:scripts/pre.sh"`), strings.Index(output, `"ref":"go-app:echo-123"`))
-	assert.Less(t, strings.Index(output, `"ref":"pre:inline:3"`), strings.Index(output, `"ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"ref":"go-app:pre_file"`), strings.Index(output, `"ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"ref":"go-app:pre_inline"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 }
 
 func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {

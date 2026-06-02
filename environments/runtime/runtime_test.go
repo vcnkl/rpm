@@ -102,14 +102,14 @@ func TestUpReturnsRuntimeFailureWithoutWaitingForUnrelatedProcess(t *testing.T) 
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
-func TestUpRunsPreScriptsAfterDependenciesBeforeTargets(t *testing.T) {
+func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{order: &order}
 	deps := &fakeDependencyRunner{order: &order}
 	plan := testPlan()
-	plan.PreScripts = []envstarlark.TargetProcess{
+	plan.BeforeTargets = []envstarlark.TargetProcess{
 		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
-		{Ref: "api:scripts/bootstrap.sh", Command: "/repo/api/scripts/bootstrap.sh", WorkingDir: "/repo/api"},
+		{Ref: "api:seed", Command: "echo seed", WorkingDir: "/repo/api"},
 	}
 	runner := envruntime.NewRunner(envruntime.Options{
 		ProcessRunner:    processes,
@@ -123,13 +123,14 @@ func TestUpRunsPreScriptsAfterDependenciesBeforeTargets(t *testing.T) {
 	assert.Equal(t, []string{
 		"deps up",
 		"process api:migrate",
-		"process api:scripts/bootstrap.sh",
+		"process api:seed",
 		"process api:serve",
+		"deps down",
 	}, order)
-	assert.Equal(t, []string{"api:migrate", "api:scripts/bootstrap.sh", "api:serve"}, processes.startedRefs())
+	assert.Equal(t, []string{"api:migrate", "api:seed", "api:serve"}, processes.startedRefs())
 }
 
-func TestUpStopsDependenciesWhenPreScriptFails(t *testing.T) {
+func TestUpStopsDependenciesWhenBeforeTargetFailsNonInteractive(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{
 		order:    &order,
@@ -138,7 +139,7 @@ func TestUpStopsDependenciesWhenPreScriptFails(t *testing.T) {
 	deps := &fakeDependencyRunner{order: &order}
 	events := &eventRecorder{}
 	plan := testPlan()
-	plan.PreScripts = []envstarlark.TargetProcess{
+	plan.BeforeTargets = []envstarlark.TargetProcess{
 		{Ref: "api:migrate", Command: "exit 1", WorkingDir: "/repo/api"},
 	}
 	runner := envruntime.NewRunner(envruntime.Options{
@@ -157,12 +158,12 @@ func TestUpStopsDependenciesWhenPreScriptFails(t *testing.T) {
 	assert.Contains(t, events.types(), envruntime.EventEnvironmentStopped)
 }
 
-func TestNoDepsStillRunsPreScriptsBeforeTargets(t *testing.T) {
+func TestNoDepsStillRunsBeforeTargetsBeforeTargets(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{order: &order}
 	deps := &fakeDependencyRunner{order: &order}
 	plan := testPlan()
-	plan.PreScripts = []envstarlark.TargetProcess{
+	plan.BeforeTargets = []envstarlark.TargetProcess{
 		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
 	}
 	runner := envruntime.NewRunner(envruntime.Options{
@@ -177,6 +178,64 @@ func TestNoDepsStillRunsPreScriptsBeforeTargets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"process api:migrate", "process api:serve"}, order)
 	assert.Zero(t, deps.upCalls)
+}
+
+func TestUpDeclaresRuntimeUnitsBeforeDependencyStartup(t *testing.T) {
+	order := []string{}
+	events := &eventRecorder{order: &order}
+	deps := &fakeDependencyRunner{order: &order}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"}}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    &fakeProcessRunner{},
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, "event unit_declared api:postgres", order[0])
+	assert.Equal(t, "event unit_declared api:migrate", order[1])
+	assert.Equal(t, "event unit_declared api:serve", order[2])
+	assert.Equal(t, "deps up", order[3])
+}
+
+func TestInteractiveMainTargetFailureKeepsOtherTargetsRunningUntilQuit(t *testing.T) {
+	processes := &fakeProcessRunner{
+		blockRefs: map[string]bool{"api:serve": true},
+		waitErrs:  map[string]error{"worker:run": assert.AnError},
+	}
+	actions := make(chan envruntime.ControlAction, 1)
+	plan := testPlan()
+	plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
+		Ref:        "worker:run",
+		Command:    "exit 1",
+		WorkingDir: "/repo/worker",
+	})
+	plan.RunOrder = []string{"api:serve", "worker:run"}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:  processes,
+		ControlActions: actions,
+		NoReload:       true,
+		Interactive:    true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	require.Never(t, func() bool {
+		return processes.stopCount("api:serve") > 0
+	}, 50*time.Millisecond, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
+
+	require.ErrorIs(t, <-done, assert.AnError)
+	assert.Equal(t, 1, processes.stopCount("api:serve"))
 }
 
 func TestWatcherChangeRestartsAffectedProcessOnly(t *testing.T) {
@@ -403,12 +462,16 @@ func (w *fakeWatcher) Watch(ctx context.Context, watches []envstarlark.Watch, on
 type eventRecorder struct {
 	mu     sync.Mutex
 	events []envruntime.Event
+	order  *[]string
 }
 
 func (r *eventRecorder) Emit(event envruntime.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
+	if r.order != nil {
+		*r.order = append(*r.order, "event "+event.Type+" "+event.Ref)
+	}
 }
 
 func (r *eventRecorder) types() []string {

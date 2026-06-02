@@ -14,12 +14,12 @@ import (
 const stepBudget = 100000
 
 type RuntimePlan struct {
-	Environment  Environment
-	Dependencies []Dependency
-	PreScripts   []TargetProcess
-	Targets      []TargetProcess
-	Watches      []Watch
-	RunOrder     []string
+	Environment   Environment
+	Dependencies  []Dependency
+	BeforeTargets []TargetProcess
+	Targets       []TargetProcess
+	Watches       []Watch
+	RunOrder      []string
 }
 
 type Environment struct {
@@ -84,12 +84,12 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 	defer close(cancelled)
 
 	predeclared := gostarlark.StringDict{
-		"rpm_environment": gostarlark.NewBuiltin("rpm_environment", rpmEnvironment),
-		"rpm_dependency":  gostarlark.NewBuiltin("rpm_dependency", rpmDependency),
-		"rpm_pre":         gostarlark.NewBuiltin("rpm_pre", rpmPre),
-		"rpm_target":      gostarlark.NewBuiltin("rpm_target", rpmTarget),
-		"rpm_watch":       gostarlark.NewBuiltin("rpm_watch", rpmWatch),
-		"rpm_run":         gostarlark.NewBuiltin("rpm_run", rpmRun),
+		"rpm_environment":   gostarlark.NewBuiltin("rpm_environment", rpmEnvironment),
+		"rpm_dependency":    gostarlark.NewBuiltin("rpm_dependency", rpmDependency),
+		"rpm_before_target": gostarlark.NewBuiltin("rpm_before_target", rpmBeforeTarget),
+		"rpm_target":        gostarlark.NewBuiltin("rpm_target", rpmTarget),
+		"rpm_watch":         gostarlark.NewBuiltin("rpm_watch", rpmWatch),
+		"rpm_run":           gostarlark.NewBuiltin("rpm_run", rpmRun),
 	}
 	predeclared.Freeze()
 
@@ -101,12 +101,12 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 }
 
 type planBuilder struct {
-	environment  Environment
-	dependencies []Dependency
-	preScripts   []TargetProcess
-	targets      []TargetProcess
-	watches      []Watch
-	runOrder     []string
+	environment   Environment
+	dependencies  []Dependency
+	beforeTargets []TargetProcess
+	targets       []TargetProcess
+	watches       []Watch
+	runOrder      []string
 }
 
 func (b *planBuilder) plan() *RuntimePlan {
@@ -117,12 +117,12 @@ func (b *planBuilder) plan() *RuntimePlan {
 	watches := append([]Watch{}, b.watches...)
 	sort.Slice(watches, func(i, j int) bool { return watches[i].Target < watches[j].Target })
 	return &RuntimePlan{
-		Environment:  b.environment,
-		Dependencies: dependencies,
-		PreScripts:   append([]TargetProcess{}, b.preScripts...),
-		Targets:      targets,
-		Watches:      watches,
-		RunOrder:     append([]string{}, b.runOrder...),
+		Environment:   b.environment,
+		Dependencies:  dependencies,
+		BeforeTargets: append([]TargetProcess{}, b.beforeTargets...),
+		Targets:       targets,
+		Watches:       watches,
+		RunOrder:      append([]string{}, b.runOrder...),
 	}
 }
 
@@ -199,12 +199,12 @@ func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlar
 	return gostarlark.None, nil
 }
 
-func rpmPre(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
+func rpmBeforeTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
 	target, err := targetProcess(fn, args, kwargs, false)
 	if err != nil {
 		return nil, err
 	}
-	builder(thread).preScripts = append(builder(thread).preScripts, target)
+	builder(thread).beforeTargets = append(builder(thread).beforeTargets, target)
 	return gostarlark.None, nil
 }
 

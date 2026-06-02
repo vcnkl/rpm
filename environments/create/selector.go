@@ -1,60 +1,67 @@
 package create
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/models"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
-func targetSelectItems(targets []*models.Target, graph *dag.Graph, selected []string) []envtui.SelectionItem {
+func targetSelectItems(targets []*models.Target, selected []string) []envtui.SelectionItem {
 	selectedSet := stringSet(selected)
-	useDefaultSuffixes := len(selectedSet) == 0
-	items := make([]envtui.SelectionItem, 0, len(targets)+8)
+	useDefaults := len(selectedSet) == 0
+	grouped := make(map[string][]envtui.SelectionItem)
 	for _, target := range targets {
-		ref := target.ID()
-		defaults := strings.HasSuffix(target.Name, "_dev") || strings.HasSuffix(target.Name, "_serve")
-		isSelected := selectedSet[ref] || (useDefaultSuffixes && defaults)
-		group := "other targets"
-		if defaults {
-			group = "env candidates"
+		if !runnableEnvironmentTarget(target) {
+			continue
 		}
-		items = append(items, envtui.SelectionItem{
+		ref := target.ID()
+		isSelected := selectedSet[ref] || useDefaults
+		grouped[target.BundleName] = append(grouped[target.BundleName], envtui.SelectionItem{
 			Ref:      ref,
-			Label:    ref,
-			Detail:   target.BundlePath,
-			Group:    group,
-			Tier:     targetTier(graph, ref),
+			Label:    target.Name,
+			Detail:   ref,
+			Group:    target.BundleName,
+			Status:   "selected",
 			Selected: isSelected,
-			Defaults: defaults,
-			Muted:    !defaults,
+			Defaults: true,
 		})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Group != items[j].Group {
-			return items[i].Group == "env candidates"
+	return groupedTargetItems(grouped)
+}
+
+func beforeSelectItems(targets []*models.Target, mainRefs []string, selected []string) []envtui.SelectionItem {
+	mainSet := stringSet(mainRefs)
+	selectedSet := stringSet(selected)
+	grouped := make(map[string][]envtui.SelectionItem)
+	for _, target := range targets {
+		ref := target.ID()
+		if mainSet[ref] {
+			continue
 		}
-		if items[i].Tier != items[j].Tier {
-			return items[i].Tier < items[j].Tier
-		}
-		return items[i].Ref < items[j].Ref
-	})
-	return withTierHeadings(items)
+		grouped[target.BundleName] = append(grouped[target.BundleName], envtui.SelectionItem{
+			Ref:      ref,
+			Label:    target.Name,
+			Detail:   ref,
+			Group:    target.BundleName,
+			Status:   "disabled",
+			Selected: selectedSet[ref],
+		})
+	}
+	return groupedTargetItems(grouped)
 }
 
 func dependencySelectItems(refs []string, selected []string) []envtui.SelectionItem {
 	selectedSet := stringSet(selected)
-	items := make([]envtui.SelectionItem, 0, len(refs)+8)
+	grouped := make(map[string][]envtui.SelectionItem)
 	for _, ref := range refs {
 		bundle, name, ok := strings.Cut(ref, ":")
 		if !ok {
 			bundle = "dependencies"
 			name = ref
 		}
-		items = append(items, envtui.SelectionItem{
+		grouped[bundle] = append(grouped[bundle], envtui.SelectionItem{
 			Ref:      ref,
 			Label:    name,
 			Detail:   ref,
@@ -62,72 +69,43 @@ func dependencySelectItems(refs []string, selected []string) []envtui.SelectionI
 			Selected: selectedSet[ref],
 		})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Group != items[j].Group {
-			return items[i].Group < items[j].Group
-		}
-		return items[i].Ref < items[j].Ref
-	})
-	return withGroupHeadings(items)
+	return groupedTargetItems(grouped)
 }
 
-func withTierHeadings(items []envtui.SelectionItem) []envtui.SelectionItem {
-	result := make([]envtui.SelectionItem, 0, len(items)+8)
-	lastGroup := ""
-	lastTier := -1
-	for _, item := range items {
-		if item.Group != lastGroup || item.Tier != lastTier {
-			result = append(result, envtui.SelectionItem{
-				Label:  fmt.Sprintf("%s / tier %d", item.Group, item.Tier),
-				Group:  item.Group,
-				Tier:   item.Tier,
-				Header: true,
-				Muted:  item.Group != "env candidates",
-			})
-			lastGroup = item.Group
-			lastTier = item.Tier
-		}
-		result = append(result, item)
+func groupedTargetItems(grouped map[string][]envtui.SelectionItem) []envtui.SelectionItem {
+	groups := make([]string, 0, len(grouped))
+	for group := range grouped {
+		groups = append(groups, group)
 	}
-	return result
+	sort.Strings(groups)
+
+	items := make([]envtui.SelectionItem, 0)
+	for _, group := range groups {
+		children := grouped[group]
+		sort.Slice(children, func(i, j int) bool {
+			return children[i].Ref < children[j].Ref
+		})
+		allSelected := len(children) > 0
+		for _, child := range children {
+			if !child.Selected {
+				allSelected = false
+				break
+			}
+		}
+		items = append(items, envtui.SelectionItem{
+			Label:      group,
+			Group:      group,
+			Selected:   allSelected,
+			Expandable: true,
+			Expanded:   true,
+		})
+		items = append(items, children...)
+	}
+	return items
 }
 
-func withGroupHeadings(items []envtui.SelectionItem) []envtui.SelectionItem {
-	result := make([]envtui.SelectionItem, 0, len(items)+8)
-	lastGroup := ""
-	for _, item := range items {
-		if item.Group != lastGroup {
-			result = append(result, envtui.SelectionItem{Label: item.Group, Group: item.Group, Header: true})
-			lastGroup = item.Group
-		}
-		result = append(result, item)
-	}
-	return result
-}
-
-func targetTier(graph *dag.Graph, ref string) int {
-	if graph == nil {
-		return 0
-	}
-	seen := map[string]bool{}
-	var visit func(id string) int
-	visit = func(id string) int {
-		if seen[id] {
-			return 0
-		}
-		seen[id] = true
-		node, ok := graph.Nodes[id]
-		if !ok {
-			return 0
-		}
-		depth := 0
-		for _, dep := range node.Deps {
-			depth = max(depth, visit(dep.ID)+1)
-		}
-		seen[id] = false
-		return depth
-	}
-	return visit(ref)
+func runnableEnvironmentTarget(target *models.Target) bool {
+	return strings.HasSuffix(target.Name, "_dev") || strings.HasSuffix(target.Name, "_serve")
 }
 
 func stringSet(values []string) map[string]bool {

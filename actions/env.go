@@ -57,6 +57,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		ControlActions:   controlActions,
 		NoDeps:           opts.NoDeps,
 		NoReload:         opts.NoReload,
+		Interactive:      !opts.NonInteractive,
 	})
 	if !opts.NonInteractive {
 		bridge := envtui.NewBridge(a.out, stderrOrDefault(a.err))

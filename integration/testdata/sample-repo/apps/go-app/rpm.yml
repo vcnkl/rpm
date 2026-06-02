@@ -32,6 +32,16 @@ targets:
     config:
       working_dir: local
 
+  - name: pre_file
+    cmd: . "$BUNDLE_ROOT/scripts/pre.sh"
+    config:
+      working_dir: local
+
+  - name: pre_inline
+    cmd: echo "PRE_INLINE=$REPO_ROOT"
+    config:
+      working_dir: repo_root
+
   - name: echo-123
     deps:
       - ":app_build"

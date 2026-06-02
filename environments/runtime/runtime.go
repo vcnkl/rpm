@@ -51,6 +51,10 @@ type ControlAction struct {
 type Event struct {
 	Type    string `json:"type"`
 	Ref     string `json:"ref,omitempty"`
+	Bundle  string `json:"bundle,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Status  string `json:"status,omitempty"`
 	Path    string `json:"path,omitempty"`
 	Line    string `json:"line,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -59,6 +63,7 @@ type Event struct {
 }
 
 const (
+	EventUnitDeclared       = "unit_declared"
 	EventProcessStarted     = "process_started"
 	EventProcessOutput      = "process_output"
 	EventProcessExited      = "process_exited"
@@ -81,6 +86,7 @@ type Options struct {
 	ControlActions   <-chan ControlAction
 	NoDeps           bool
 	NoReload         bool
+	Interactive      bool
 }
 
 type Runner struct {
@@ -104,11 +110,15 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	r.cancel = cancel
 	r.plan = plan
 	defer cancel()
+	r.declareUnits(plan)
 
 	startedDeps := false
 	if r.opts.DependencyRunner != nil && !r.opts.NoDeps && len(plan.Dependencies) > 0 {
 		if err := r.opts.DependencyRunner.Up(ctx, plan.Environment.Name, plan); err != nil {
-			r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Error: err.Error()})
+			r.emitDependencyFailure(plan, err)
+			if r.opts.Interactive {
+				return r.waitForQuitAfterError(ctx, plan, err, false)
+			}
 			return err
 		}
 		startedDeps = true
@@ -117,26 +127,30 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 		}
 	}
 
-	for _, pre := range plan.PreScripts {
-		if err := r.runPreScript(ctx, pre); err != nil {
-			if startedDeps {
-				_ = r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan)
+	for _, before := range plan.BeforeTargets {
+		if err := r.runBeforeTarget(ctx, before); err != nil {
+			if r.opts.Interactive {
+				return r.waitForQuitAfterError(ctx, plan, err, startedDeps)
 			}
+			r.stopDependencies(ctx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return err
 		}
 	}
 
+	var recordedErr error
 	for _, ref := range targetOrder(plan) {
 		target, ok := targetByRef(plan, ref)
 		if !ok {
 			continue
 		}
 		if err := r.startTarget(ctx, target); err != nil {
-			r.stopProcesses(ctx)
-			if startedDeps {
-				_ = r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan)
+			if r.opts.Interactive {
+				recordedErr = firstErr(recordedErr, err)
+				continue
 			}
+			r.stopProcesses(ctx)
+			r.stopDependencies(ctx, plan, startedDeps)
 			return err
 		}
 	}
@@ -159,22 +173,25 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	defer watchCancel()
 
 	for {
-		if r.activeCount() == 0 {
+		if r.activeCount() == 0 && recordedErr == nil {
+			r.stopDependencies(ctx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return nil
 		}
 		select {
 		case <-ctx.Done():
 			r.stopProcesses(ctx)
+			r.stopDependencies(ctx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
-			return nil
+			return recordedErr
 		case action, ok := <-r.opts.ControlActions:
 			if !ok {
 				continue
 			}
 			if r.handleControlAction(ctx, plan, action) {
+				r.stopDependencies(ctx, plan, startedDeps)
 				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
-				return nil
+				return recordedErr
 			}
 		case exit := <-r.done:
 			if exit.ref != "" {
@@ -186,10 +203,12 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 				r.opts.EventSink.Emit(event)
 			}
 			if exit.err != nil {
-				r.stopProcesses(ctx)
-				if startedDeps {
-					_ = r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan)
+				if r.opts.Interactive {
+					recordedErr = firstErr(recordedErr, exit.err)
+					continue
 				}
+				r.stopProcesses(ctx)
+				r.stopDependencies(ctx, plan, startedDeps)
 				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 				return exit.err
 			}
@@ -324,7 +343,7 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	return nil
 }
 
-func (r *Runner) runPreScript(ctx context.Context, target envstarlark.TargetProcess) error {
+func (r *Runner) runBeforeTarget(ctx context.Context, target envstarlark.TargetProcess) error {
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
@@ -541,6 +560,104 @@ func targetByRef(plan *envstarlark.RuntimePlan, ref string) (envstarlark.TargetP
 		}
 	}
 	return envstarlark.TargetProcess{}, false
+}
+
+func (r *Runner) declareUnits(plan *envstarlark.RuntimePlan) {
+	for _, dep := range plan.Dependencies {
+		bundle, name := splitRef(dep.Ref)
+		r.opts.EventSink.Emit(Event{
+			Type:   EventUnitDeclared,
+			Ref:    dep.Ref,
+			Bundle: bundle,
+			Name:   name,
+			Kind:   "dependency",
+			Status: "pending",
+		})
+	}
+	for _, before := range plan.BeforeTargets {
+		bundle, name := splitRef(before.Ref)
+		r.opts.EventSink.Emit(Event{
+			Type:   EventUnitDeclared,
+			Ref:    before.Ref,
+			Bundle: bundle,
+			Name:   name,
+			Kind:   "before",
+			Status: "pending",
+		})
+	}
+	for _, target := range plan.Targets {
+		bundle, name := splitRef(target.Ref)
+		r.opts.EventSink.Emit(Event{
+			Type:   EventUnitDeclared,
+			Ref:    target.Ref,
+			Bundle: bundle,
+			Name:   name,
+			Kind:   "target",
+			Status: "pending",
+		})
+	}
+}
+
+func (r *Runner) emitDependencyFailure(plan *envstarlark.RuntimePlan, err error) {
+	if len(plan.Dependencies) == 0 {
+		r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: "dependencies", Error: err.Error()})
+		return
+	}
+	for _, dep := range plan.Dependencies {
+		r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: dep.Ref, Error: err.Error()})
+	}
+}
+
+func (r *Runner) waitForQuitAfterError(ctx context.Context, plan *envstarlark.RuntimePlan, err error, startedDeps bool) error {
+	for {
+		select {
+		case <-ctx.Done():
+			r.stopProcesses(ctx)
+			r.stopDependencies(ctx, plan, startedDeps)
+			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
+			return err
+		case action, ok := <-r.opts.ControlActions:
+			if !ok {
+				continue
+			}
+			if r.handleControlAction(ctx, plan, action) {
+				r.stopDependencies(ctx, plan, startedDeps)
+				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
+				return err
+			}
+		case exit := <-r.done:
+			if exit.ref == "" {
+				continue
+			}
+			r.removeProcess(exit.ref, exit.process)
+			event := Event{Type: EventProcessExited, Ref: exit.ref}
+			if exit.err != nil {
+				event.Error = exit.err.Error()
+			}
+			r.opts.EventSink.Emit(event)
+		}
+	}
+}
+
+func (r *Runner) stopDependencies(ctx context.Context, plan *envstarlark.RuntimePlan, started bool) {
+	if started && r.opts.DependencyRunner != nil {
+		_ = r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan)
+	}
+}
+
+func splitRef(ref string) (string, string) {
+	bundle, name, ok := strings.Cut(ref, ":")
+	if !ok {
+		return "", ref
+	}
+	return bundle, name
+}
+
+func firstErr(existing error, next error) error {
+	if existing != nil {
+		return existing
+	}
+	return next
 }
 
 func enabledWatches(plan *envstarlark.RuntimePlan) []envstarlark.Watch {

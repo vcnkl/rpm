@@ -110,7 +110,8 @@ rpm test                            # Run all *_test targets
 ### env
 ```bash
 rpm env create [blueprint] --target bundle:target [--deps]
-rpm env edit <blueprint> --add-target bundle:target
+rpm env create [blueprint] --target bundle:target --before bundle:migrate
+rpm env edit <blueprint> --add-target bundle:target --add-before bundle:migrate
 rpm env validate <blueprint>
 rpm env render <blueprint> [--out path]
 rpm env up <blueprint> [--non-interactive] [--no-reload] [--no-deps] [--render-only]
@@ -125,12 +126,8 @@ name: local-stack
 live_reload:
   enabled: true
   debounce: 100ms
-pre:
+before:
   - go-app:migrate
-  - go-app:scripts/bootstrap.sh
-  - /scripts/repo-bootstrap.sh
-  - |
-    echo "inline pre"
 targets:
   - ref: go-app:echo-123
     reload: true

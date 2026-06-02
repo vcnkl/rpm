@@ -10,6 +10,7 @@ type RuntimeOptions struct {
 func BlueprintWithRuntimeOptions(blueprint *models.EnvironmentBlueprint, opts RuntimeOptions) *models.EnvironmentBlueprint {
 	next := *blueprint
 	next.Variables = copyStringMap(blueprint.Variables)
+	next.Before = append([]string{}, blueprint.Before...)
 	next.Targets = append([]models.EnvironmentTarget{}, blueprint.Targets...)
 	for i := range next.Targets {
 		next.Targets[i].Env = copyStringMap(next.Targets[i].Env)
