@@ -21,7 +21,11 @@ await esbuild.build({
 	format: 'esm',
 	outfile: 'dist/index.js',
 	banner: {
-		js: '#!/usr/bin/env node'
+		js: [
+			'#!/usr/bin/env node',
+			'import { createRequire as __rpmCreateRequire } from "node:module"',
+			'const require = __rpmCreateRequire(import.meta.url)'
+		].join('\n')
 	},
 	plugins: [reactDevtoolsStub]
 })

@@ -175,6 +175,13 @@ function SelectionView({ request }: { request: SelectionRequest }) {
 	const windowed = visibleWindow(state.items, state.cursor, bodyHeight)
 	const selectedCount = selectedSelectionRefs(state).length
 
+	useEffect(() => {
+		if (process.env.RPM_ENV_TUI_AUTO_CONFIRM === '1') {
+			process.stdout.write(JSON.stringify({ refs: selectedSelectionRefs(state) }) + '\n')
+			process.exit(0)
+		}
+	}, [state])
+
 	useInput((input, key) => {
 		const action = actionForSelectionKey(input, key)
 		if (action.type === 'select' || action.type === 'toggle') dispatch(action)
