@@ -171,11 +171,11 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if strings.TrimSpace(name) == "" {
 		return ErrMissingBlueprintName
 	}
-	targets, err := prompt.chooseTargets(repo.AllTargets(), nil)
+	targets, err := prompt.chooseTargets(repo.QueryTargets(environmentMainTarget), nil)
 	if err != nil {
 		return err
 	}
-	before, err := prompt.chooseBeforeTargets(repo.AllTargets(), targets, opts.Before)
+	before, err := prompt.chooseBeforeTargets(repo.QueryTargets(environmentBeforeTarget), targets, opts.Before)
 	if err != nil {
 		return err
 	}
@@ -210,11 +210,11 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	}
 	prompt := newPrompt(in, out)
 	existingTargets := targetMap(blueprint.Targets)
-	targets, err := prompt.chooseTargets(repo.AllTargets(), targetRefs(existingTargets))
+	targets, err := prompt.chooseTargets(repo.QueryTargets(environmentMainTarget), targetRefs(existingTargets))
 	if err != nil {
 		return err
 	}
-	before, err := prompt.chooseBeforeTargets(repo.AllTargets(), targets, blueprint.Before)
+	before, err := prompt.chooseBeforeTargets(repo.QueryTargets(environmentBeforeTarget), targets, blueprint.Before)
 	if err != nil {
 		return err
 	}
@@ -304,6 +304,19 @@ func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, b
 			Debounce: "100ms",
 		},
 	}, nil
+}
+
+func environmentMainTarget(target *models.Target) bool {
+	return environmentBeforeTarget(target) &&
+		(strings.HasSuffix(target.Name, "_dev") || strings.HasSuffix(target.Name, "_serve"))
+}
+
+func environmentBeforeTarget(target *models.Target) bool {
+	name := target.Name
+	return name != "build" &&
+		name != "test" &&
+		!strings.HasSuffix(name, "_build") &&
+		!strings.HasSuffix(name, "_test")
 }
 
 func normalizeBeforeRefs(repo *rootconfig.Config, targetRefs []string, beforeRefs []string) ([]string, error) {
@@ -596,12 +609,7 @@ func (p prompt) chooseBeforeTargets(targets []*models.Target, mainRefs []string,
 }
 
 func runnableTargets(targets []*models.Target) []*models.Target {
-	choices := make([]*models.Target, 0, len(targets))
-	for _, target := range targets {
-		if runnableEnvironmentTarget(target) {
-			choices = append(choices, target)
-		}
-	}
+	choices := append([]*models.Target{}, targets...)
 	sort.Slice(choices, func(i, j int) bool {
 		return choices[i].ID() < choices[j].ID()
 	})

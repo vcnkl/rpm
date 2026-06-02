@@ -132,9 +132,17 @@ func (c *Config) EnvironmentDependencies() map[string]models.EnvironmentDependen
 }
 
 func (c *Config) AllTargets() []*models.Target {
+	return c.QueryTargets(nil)
+}
+
+func (c *Config) QueryTargets(query func(*models.Target) bool) []*models.Target {
 	var targets []*models.Target
 	for _, bundle := range c.bundles {
-		targets = append(targets, bundle.Targets...)
+		for _, target := range bundle.Targets {
+			if query == nil || query(target) {
+				targets = append(targets, target)
+			}
+		}
 	}
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].ID() < targets[j].ID()

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -419,6 +420,45 @@ func TestConfig_AllTargetsSorted(t *testing.T) {
 	assert.Equal(t, []string{"a:b", "z:a", "z:b"}, []string{targets[0].ID(), targets[1].ID(), targets[2].ID()})
 }
 
+func TestConfig_QueryTargets(t *testing.T) {
+	cfg := &Config{
+		bundles: map[string]*models.Bundle{
+			"api": {
+				Name: "api",
+				Targets: []*models.Target{
+					{Name: "app_build", BundleName: "api"},
+					{Name: "app_test", BundleName: "api"},
+					{Name: "build", BundleName: "api"},
+					{Name: "http_dev", BundleName: "api"},
+					{Name: "migrate", BundleName: "api"},
+					{Name: "test", BundleName: "api"},
+				},
+			},
+			"worker": {
+				Name: "worker",
+				Targets: []*models.Target{
+					{Name: "jobs_serve", BundleName: "worker"},
+				},
+			},
+		},
+	}
+
+	targets := cfg.QueryTargets(func(target *models.Target) bool {
+		return strings.HasSuffix(target.Name, "_dev") || strings.HasSuffix(target.Name, "_serve")
+	})
+
+	assert.Equal(t, []string{"api:http_dev", "worker:jobs_serve"}, targetIds(targets))
+
+	targets = cfg.QueryTargets(func(target *models.Target) bool {
+		return target.Name != "build" &&
+			target.Name != "test" &&
+			!strings.HasSuffix(target.Name, "_build") &&
+			!strings.HasSuffix(target.Name, "_test")
+	})
+
+	assert.Equal(t, []string{"api:http_dev", "api:migrate", "worker:jobs_serve"}, targetIds(targets))
+}
+
 func TestNewConfigWithRepoFile(t *testing.T) {
 	repoRoot := t.TempDir()
 	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/bash\n"), 0644))
@@ -604,6 +644,14 @@ func TestConfig_Accessors(t *testing.T) {
 	assert.Equal(t, "/bin/bash", cfg.Repo().Shell)
 	assert.Len(t, cfg.Bundles(), 1)
 	assert.Equal(t, "core", cfg.Bundles()["core"].Name)
+}
+
+func targetIds(targets []*models.Target) []string {
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		ids = append(ids, target.ID())
+	}
+	return ids
 }
 
 func requireNoError(t *testing.T, err error) {

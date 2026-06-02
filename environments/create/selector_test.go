@@ -13,7 +13,6 @@ import (
 func TestTargetSelectItemsGroupsRunnableTargetsByBundle(t *testing.T) {
 	targets := []*models.Target{
 		target("worker", "jobs_serve"),
-		target("api", "build"),
 		target("api", "web_dev"),
 	}
 

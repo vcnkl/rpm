@@ -105,13 +105,13 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123,ts-app:web\n\nn\n"),
+		In:   strings.NewReader("go-app:app_dev,ts-app:app_dev\n\nn\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:app_dev", "ts-app:app_dev"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.True(t, blueprint.ReloadPolicy.Enabled)
 	assert.Nil(t, blueprint.Targets[0].Reload)
 	assert.Nil(t, blueprint.Targets[1].Reload)
@@ -123,7 +123,7 @@ func TestRunCreateInteractiveCanGloballyDisableLiveReload(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123\n\ny\nn\n"),
+		In:   strings.NewReader("go-app:app_dev\n\ny\nn\n"),
 	})
 
 	require.NoError(t, err)
@@ -144,13 +144,13 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123,python-app:echo-456\n\n\n\n\n"),
+		In:   strings.NewReader("go-app:app_dev,python-app:app_dev\n\n\n\n\n"),
 	})
 
 	require.NoError(t, err)
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"go-app:echo-123", "python-app:echo-456"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"go-app:app_dev", "python-app:app_dev"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 }
 
 func newTestRepo(t *testing.T) *rootconfig.Config {
@@ -190,6 +190,8 @@ env:
 targets:
   - name: `+echoTarget+`
     cmd: echo `+echoTarget+`
+  - name: app_dev
+    cmd: echo app_dev
   - name: web
     cmd: echo web
 `), 0644))

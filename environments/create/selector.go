@@ -13,9 +13,6 @@ func targetSelectItems(targets []*models.Target, selected []string) []envtui.Sel
 	useDefaults := len(selectedSet) == 0
 	grouped := make(map[string][]envtui.SelectionItem)
 	for _, target := range targets {
-		if !runnableEnvironmentTarget(target) {
-			continue
-		}
 		ref := target.ID()
 		isSelected := selectedSet[ref] || useDefaults
 		grouped[target.BundleName] = append(grouped[target.BundleName], envtui.SelectionItem{
@@ -102,10 +99,6 @@ func groupedTargetItems(grouped map[string][]envtui.SelectionItem) []envtui.Sele
 		items = append(items, children...)
 	}
 	return items
-}
-
-func runnableEnvironmentTarget(target *models.Target) bool {
-	return strings.HasSuffix(target.Name, "_dev") || strings.HasSuffix(target.Name, "_serve")
 }
 
 func stringSet(values []string) map[string]bool {
