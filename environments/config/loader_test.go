@@ -145,23 +145,6 @@ targets:
 	}
 }
 
-func TestLoadBlueprintRejectsLegacyPre(t *testing.T) {
-	repo := newTestRepo(t)
-	writeBlueprint(t, repo.RepoRoot(), "legacy", `
-name: legacy
-targets:
-  - ref: api:serve
-pre:
-  - api:serve
-`)
-
-	_, err := envconfig.LoadBlueprint(repo, "legacy")
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, envconfig.ErrUnsupportedPre))
-	assert.Contains(t, err.Error(), "pre is no longer supported; use before with existing target refs")
-}
-
 func TestLoadBlueprintInvalidBeforeTarget(t *testing.T) {
 	tests := []struct {
 		name    string

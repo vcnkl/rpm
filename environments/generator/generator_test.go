@@ -32,14 +32,14 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Ref: "a:redis", Name: "redis", Image: "redis:7", Mode: models.DependencyInstanceModeDedicated},
 		},
 		BeforeTargets: []spec.BeforeTarget{
-			{Ref: "z:pre", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
-			{Ref: "a:pre", Command: "echo a", WorkingDir: "/repo/a", Env: []spec.EnvVar{{Name: "A", Value: "1"}}},
+			{Ref: "z:before", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
+			{Ref: "a:before", Command: "echo a", WorkingDir: "/repo/a", Env: []spec.EnvVar{{Name: "A", Value: "1"}}},
 		},
 		RuntimeUnits: []spec.RuntimeUnit{
 			{Id: "z:serve", Kind: "target"},
 			{Id: "a:redis", Kind: "dependency"},
-			{Id: "a:pre", Kind: "before"},
-			{Id: "z:pre", Kind: "before"},
+			{Id: "a:before", Kind: "before"},
+			{Id: "z:before", Kind: "before"},
 			{Id: "a:serve", Kind: "target"},
 			{Id: "z:postgres", Kind: "dependency"},
 		},
@@ -53,12 +53,12 @@ func TestRenderDeterministicOutput(t *testing.T) {
 
 	assert.Equal(t, string(first), string(second))
 	assert.Less(t, strings.Index(string(first), `ref = "a:redis"`), strings.Index(string(first), `ref = "z:postgres"`))
-	assert.Less(t, strings.Index(string(first), `ref = "z:pre"`), strings.Index(string(first), `ref = "a:pre"`))
-	assert.Less(t, strings.Index(string(first), `ref = "a:pre"`), strings.Index(string(first), `ref = "a:serve"`))
+	assert.Less(t, strings.Index(string(first), `ref = "z:before"`), strings.Index(string(first), `ref = "a:before"`))
+	assert.Less(t, strings.Index(string(first), `ref = "a:before"`), strings.Index(string(first), `ref = "a:serve"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
 	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432"]`)
 	assert.Contains(t, string(first), `volumes = ["a:/a", "z:/z"]`)
-	assert.Contains(t, string(first), `order = ["a:pre", "z:pre", "a:redis", "z:postgres", "a:serve", "z:serve"]`)
+	assert.Contains(t, string(first), `order = ["a:before", "z:before", "a:redis", "z:postgres", "a:serve", "z:serve"]`)
 }
 
 func TestRenderGoldenLocalStack(t *testing.T) {

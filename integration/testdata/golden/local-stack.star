@@ -36,19 +36,19 @@ rpm_dependency(
 
 rpm_before_target(
     ref = "go-app:prepare",
-    command = "echo \"PRE_TARGET=$BUNDLE_ROOT\"",
+    command = "echo \"BEFORE_TARGET=$BUNDLE_ROOT\"",
     workdir = "<repo>/apps/go-app",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
 rpm_before_target(
-    ref = "go-app:pre_file",
-    command = ". \"$BUNDLE_ROOT/scripts/pre.sh\"",
+    ref = "go-app:before_file",
+    command = ". \"$BUNDLE_ROOT/scripts/before.sh\"",
     workdir = "<repo>/apps/go-app",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
 rpm_before_target(
-    ref = "go-app:pre_inline",
-    command = "echo \"PRE_INLINE=$REPO_ROOT\"",
+    ref = "go-app:before_inline",
+    command = "echo \"BEFORE_INLINE=$REPO_ROOT\"",
     workdir = "<repo>",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
@@ -97,5 +97,5 @@ rpm_watch(
 )
 
 rpm_run(
-    order = ["go-app:pre_file", "go-app:pre_inline", "go-app:prepare", "go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
+    order = ["go-app:before_file", "go-app:before_inline", "go-app:prepare", "go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
 )

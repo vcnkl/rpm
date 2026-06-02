@@ -23,7 +23,6 @@ var (
 	ErrUnknownBlueprintRef   = errors.New("unknown blueprint target ref")
 	ErrDuplicateBlueprintRef = errors.New("duplicate blueprint target ref")
 	ErrUnknownDependencyRef  = errors.New("unknown blueprint dependency ref")
-	ErrUnsupportedPre        = errors.New("pre is no longer supported; use before with existing target refs")
 )
 
 type BlueprintConfig struct {
@@ -76,9 +75,6 @@ func LoadBlueprintFile(repo *rootconfig.Config, path string) (*models.Environmen
 	var cfg BlueprintConfig
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, errors.Wrapf(err, "failed to parse blueprint %s", path)
-	}
-	if k.Exists("pre") {
-		return nil, ErrUnsupportedPre
 	}
 	cfg.SetDefaults()
 	if err := cfg.Validate(repo); err != nil {

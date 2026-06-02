@@ -1,0 +1,1 @@
+echo "BEFORE_FILE=$BUNDLE_ROOT"

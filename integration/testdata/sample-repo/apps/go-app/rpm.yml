@@ -28,17 +28,17 @@ targets:
       working_dir: local
 
   - name: prepare
-    cmd: echo "PRE_TARGET=$BUNDLE_ROOT"
+    cmd: echo "BEFORE_TARGET=$BUNDLE_ROOT"
     config:
       working_dir: local
 
-  - name: pre_file
-    cmd: . "$BUNDLE_ROOT/scripts/pre.sh"
+  - name: before_file
+    cmd: . "$BUNDLE_ROOT/scripts/before.sh"
     config:
       working_dir: local
 
-  - name: pre_inline
-    cmd: echo "PRE_INLINE=$REPO_ROOT"
+  - name: before_inline
+    cmd: echo "BEFORE_INLINE=$REPO_ROOT"
     config:
       working_dir: repo_root
 

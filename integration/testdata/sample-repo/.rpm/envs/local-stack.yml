@@ -5,8 +5,8 @@ live_reload:
     debounce: 100ms
 before:
     - go-app:prepare
-    - go-app:pre_file
-    - go-app:pre_inline
+    - go-app:before_file
+    - go-app:before_inline
 targets:
     - ref: go-app:echo-123
       reload: true

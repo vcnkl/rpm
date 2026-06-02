@@ -1,1 +1,0 @@
-echo "PRE_FILE=$BUNDLE_ROOT"
