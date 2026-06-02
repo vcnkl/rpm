@@ -7,30 +7,27 @@ rpm_environment(
 )
 
 rpm_dependency(
-    ref = "go-app:postgres",
-    name = "postgres",
-    image = "postgres:16",
-    mode = "shared",
-    env = {"POSTGRES_PASSWORD": "example"},
-    ports = ["5432"],
-    volumes = ["postgres-data:/var/lib/postgresql/data"],
-)
-rpm_dependency(
-    ref = "python-app:redis",
-    name = "redis",
-    image = "redis:7",
-    mode = "dedicated",
+    ref = "mailhog",
+    name = "mailhog",
+    image = "mailhog/mailhog:v1.0.1",
     env = {},
-    ports = ["6379:6379"],
+    ports = ["1025"],
     volumes = [],
 )
 rpm_dependency(
-    ref = "ts-app:mailhog",
-    name = "mailhog",
-    image = "mailhog/mailhog:v1.0.1",
-    mode = "shared",
+    ref = "postgres",
+    name = "postgres",
+    image = "postgres:16",
+    env = {"POSTGRES_PASSWORD": "example"},
+    ports = ["5432"],
+    volumes = ["/var/lib/postgresql/data"],
+)
+rpm_dependency(
+    ref = "redis",
+    name = "redis",
+    image = "redis:7",
     env = {},
-    ports = ["1025"],
+    ports = ["6379:6379"],
     volumes = [],
 )
 
@@ -97,5 +94,5 @@ rpm_watch(
 )
 
 rpm_run(
-    order = ["go-app:before_file", "go-app:before_inline", "go-app:prepare", "go-app:postgres", "python-app:redis", "ts-app:mailhog", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
+    order = ["go-app:before_file", "go-app:before_inline", "go-app:prepare", "mailhog", "postgres", "redis", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
 )

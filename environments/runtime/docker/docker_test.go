@@ -2,6 +2,10 @@ package docker_test
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -13,16 +17,17 @@ import (
 
 func TestUpStartsSharedDependencyWithNetworkVolumeEnvPortsAndBinds(t *testing.T) {
 	backend := &recordingBackend{}
-	runner := docker.NewCLI(docker.Options{Backend: backend})
+	runner := docker.NewCLI(docker.Options{Backend: backend, VolumeNamer: fixedVolumeNamer{
+		names: map[string]string{"local-stack|postgres|/var/lib/postgresql/data": "sample-repo-postgres-local-stack-123456"},
+	}})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{{
-			Ref:     "api:postgres",
+			Ref:     "postgres",
 			Name:    "postgres",
 			Image:   "postgres:16",
-			Mode:    "shared",
 			Env:     map[string]string{"POSTGRES_PASSWORD": "example"},
 			Ports:   []string{"5432:5432"},
-			Volumes: []string{"postgres-data:/var/lib/postgresql/data"},
+			Volumes: []string{"/var/lib/postgresql/data"},
 		}},
 	}
 
@@ -31,16 +36,16 @@ func TestUpStartsSharedDependencyWithNetworkVolumeEnvPortsAndBinds(t *testing.T)
 
 	assert.Equal(t, []string{
 		"network rpm-local-stack",
-		"volume postgres-data",
-		"run rpm-local-stack-api-postgres",
+		"volume sample-repo-postgres-local-stack-123456",
+		"run rpm-local-stack-postgres",
 	}, backend.calls)
 	assert.Equal(t, []docker.ContainerSpec{{
-		Name:    "rpm-local-stack-api-postgres",
+		Name:    "rpm-local-stack-postgres",
 		Image:   "postgres:16",
 		Network: "rpm-local-stack",
 		Env:     map[string]string{"POSTGRES_PASSWORD": "example"},
 		Ports:   []string{"5432:5432"},
-		Volumes: []string{"postgres-data:/var/lib/postgresql/data"},
+		Volumes: []string{"sample-repo-postgres-local-stack-123456:/var/lib/postgresql/data"},
 	}}, backend.containers)
 }
 
@@ -49,9 +54,9 @@ func TestUpReusesExistingDockerNetwork(t *testing.T) {
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{{
-			Ref:   "api:postgres",
+			Ref:   "postgres",
+			Name:  "postgres",
 			Image: "postgres:16",
-			Mode:  "shared",
 		}},
 	}
 
@@ -60,10 +65,10 @@ func TestUpReusesExistingDockerNetwork(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"network rpm-local-stack",
-		"run rpm-local-stack-api-postgres",
+		"run rpm-local-stack-postgres",
 	}, backend.calls)
 	assert.Equal(t, []docker.ContainerSpec{{
-		Name:    "rpm-local-stack-api-postgres",
+		Name:    "rpm-local-stack-postgres",
 		Image:   "postgres:16",
 		Network: "rpm-local-stack",
 	}}, backend.containers)
@@ -79,10 +84,9 @@ func TestUpAllocatesDynamicHostPortForSingleContainerPort(t *testing.T) {
 	})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{{
-			Ref:   "api:postgres",
+			Ref:   "postgres",
 			Name:  "postgres",
 			Image: "postgres:16",
-			Mode:  "shared",
 			Ports: []string{"5432"},
 		}},
 	}
@@ -91,7 +95,7 @@ func TestUpAllocatesDynamicHostPortForSingleContainerPort(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{{
-		Name:    "rpm-local-stack-api-postgres",
+		Name:    "rpm-local-stack-postgres",
 		Image:   "postgres:16",
 		Network: "rpm-local-stack",
 		Ports:   []string{"49152:5432"},
@@ -108,10 +112,9 @@ func TestUpPreservesMultipleBarePorts(t *testing.T) {
 	})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{{
-			Ref:   "api:mailhog",
+			Ref:   "mailhog",
 			Name:  "mailhog",
 			Image: "mailhog/mailhog:v1.0.1",
-			Mode:  "shared",
 			Ports: []string{"1025", "8025"},
 		}},
 	}
@@ -120,7 +123,7 @@ func TestUpPreservesMultipleBarePorts(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{{
-		Name:    "rpm-local-stack-api-mailhog",
+		Name:    "rpm-local-stack-mailhog",
 		Image:   "mailhog/mailhog:v1.0.1",
 		Network: "rpm-local-stack",
 		Ports:   []string{"1025", "8025"},
@@ -138,17 +141,15 @@ func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{
 			{
-				Ref:   "python-app:redis",
+				Ref:   "redis",
 				Name:  "redis",
 				Image: "redis:7",
-				Mode:  "dedicated",
 				Ports: []string{"6379:6379"},
 			},
 			{
-				Ref:   "ts-app:mailhog",
+				Ref:   "mailhog",
 				Name:  "mailhog",
 				Image: "mailhog/mailhog:v1.0.1",
-				Mode:  "shared",
 				Ports: []string{"1025"},
 			},
 		},
@@ -163,13 +164,13 @@ func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 
 	assert.Equal(t, []docker.ContainerSpec{
 		{
-			Name:    "rpm-local-stack-python-app-redis-python-app-echo-456",
+			Name:    "rpm-local-stack-redis",
 			Image:   "redis:7",
 			Network: "rpm-local-stack",
 			Ports:   []string{"6379:6379"},
 		},
 		{
-			Name:    "rpm-local-stack-ts-app-mailhog",
+			Name:    "rpm-local-stack-mailhog",
 			Image:   "mailhog/mailhog:v1.0.1",
 			Network: "rpm-local-stack",
 			Ports:   []string{"49153:1025"},
@@ -177,15 +178,14 @@ func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 	}, backend.containers)
 }
 
-func TestUpBuildsDedicatedDockerContainersPerTarget(t *testing.T) {
+func TestUpBuildsOneDockerContainerPerDependency(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{{
-			Ref:   "api:redis",
+			Ref:   "redis",
 			Name:  "redis",
 			Image: "redis:7",
-			Mode:  "dedicated",
 		}},
 		Targets: []envstarlark.TargetProcess{
 			{Ref: "api:serve"},
@@ -198,8 +198,7 @@ func TestUpBuildsDedicatedDockerContainersPerTarget(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{
-		{Name: "rpm-local-stack-api-redis-api-serve", Image: "redis:7", Network: "rpm-local-stack"},
-		{Name: "rpm-local-stack-api-redis-api-worker", Image: "redis:7", Network: "rpm-local-stack"},
+		{Name: "rpm-local-stack-redis", Image: "redis:7", Network: "rpm-local-stack"},
 	}, backend.containers)
 }
 
@@ -207,36 +206,62 @@ func TestDownRemovesDependencyContainersAndNetwork(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
-		Dependencies: []envstarlark.Dependency{{Ref: "api:postgres", Image: "postgres:16", Mode: "shared"}},
+		Dependencies: []envstarlark.Dependency{{Ref: "postgres", Name: "postgres", Image: "postgres:16"}},
 	}
 
 	err := runner.Down(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
-		"remove-container rpm-local-stack-api-postgres",
+		"remove-container rpm-local-stack-postgres",
 		"remove-network rpm-local-stack",
 	}, backend.calls)
 }
 
 func TestDownIgnoresMissingDependencyContainersAndNetwork(t *testing.T) {
 	backend := &recordingBackend{missingContainers: map[string]bool{
-		"rpm-local-stack-api-postgres": true,
+		"rpm-local-stack-postgres": true,
 	}, missingNetworks: map[string]bool{
 		"rpm-local-stack": true,
 	}}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
-		Dependencies: []envstarlark.Dependency{{Ref: "api:postgres", Image: "postgres:16", Mode: "shared"}},
+		Dependencies: []envstarlark.Dependency{{Ref: "postgres", Name: "postgres", Image: "postgres:16"}},
 	}
 
 	err := runner.Down(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
-		"remove-container rpm-local-stack-api-postgres",
+		"remove-container rpm-local-stack-postgres",
 		"remove-network rpm-local-stack",
 	}, backend.calls)
+}
+
+func TestFileVolumeNamerPersistsAndPrunesBlueprintEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "env-volumes.json")
+	namer := docker.NewFileVolumeNamer(path, "sample-repo")
+
+	first, err := namer.Name(context.Background(), "local-stack", "postgres", "/var/lib/postgresql/data")
+	require.NoError(t, err)
+	second, err := namer.Name(context.Background(), "local-stack", "postgres", "/var/lib/postgresql/data")
+	require.NoError(t, err)
+
+	assert.Equal(t, first, second)
+	assert.Regexp(t, regexp.MustCompile(`^sample-repo-postgres-local-stack-[0-9]{6}$`), first)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var cache map[string]map[string]map[string]string
+	require.NoError(t, json.Unmarshal(data, &cache))
+	assert.Equal(t, first, cache["local-stack"]["postgres"]["/var/lib/postgresql/data"])
+
+	require.NoError(t, docker.PruneVolumeCache(path, "local-stack"))
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	cache = nil
+	require.NoError(t, json.Unmarshal(data, &cache))
+	assert.NotContains(t, cache, "local-stack")
 }
 
 type recordingBackend struct {
@@ -284,4 +309,16 @@ type fixedPortAllocator struct {
 
 func (a fixedPortAllocator) Allocate(context.Context) (int, error) {
 	return a.port, nil
+}
+
+type fixedVolumeNamer struct {
+	names map[string]string
+}
+
+func (n fixedVolumeNamer) Name(_ context.Context, blueprint string, dependency string, path string) (string, error) {
+	key := blueprint + "|" + dependency + "|" + path
+	if name := n.names[key]; name != "" {
+		return name, nil
+	}
+	return "sample-repo-" + dependency + "-" + blueprint + "-123456", nil
 }

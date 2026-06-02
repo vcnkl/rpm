@@ -44,6 +44,8 @@ func TestResolveWorkingDirCompatibility(t *testing.T) {
 func TestResolveTargetEnvAndDotenvCompatibility(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
 env:
   FROM_REPO: repo
 `), 0644))
@@ -98,6 +100,8 @@ targets:
 func TestResolveBeforeTargetsReuseTargetContext(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
 shell: /bin/sh
 env:
   GLOBAL_VAR: global
@@ -181,7 +185,7 @@ func TestResolveRejectsInvalidBeforeTargets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 			writeBundleWithTargets(t, repoRoot, "api", "serve", "migrate")
 			repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 			blueprint := &models.EnvironmentBlueprint{Name: "local", Before: tt.before, Targets: tt.targets}
@@ -196,7 +200,7 @@ func TestResolveRejectsInvalidBeforeTargets(t *testing.T) {
 
 func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "z", "z")
 	writeBundle(t, repoRoot, "a", "a")
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
@@ -219,7 +223,7 @@ func TestResolveSortsEnvironmentTargets(t *testing.T) {
 
 func TestResolveUsesBundleTargetReloadConfig(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeBundleWithReload(t, repoRoot, "api", false)
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 	blueprint := &models.EnvironmentBlueprint{
@@ -240,7 +244,7 @@ func TestResolveUsesBundleTargetReloadConfig(t *testing.T) {
 
 func TestResolveTargetReloadOverrideIsGatedByGlobalPolicy(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "api", "api")
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 	reload := true

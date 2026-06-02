@@ -37,7 +37,6 @@ type Dependency struct {
 	Ref     string
 	Name    string
 	Image   string
-	Mode    string
 	Env     map[string]string
 	Ports   []string
 	Volumes []string
@@ -145,13 +144,12 @@ func rpmEnvironment(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gost
 }
 
 func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
-	var ref, name, image, mode string
+	var ref, name, image string
 	var envValue, portsValue, volumesValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
 		"ref", &ref,
 		"name", &name,
 		"image", &image,
-		"mode", &mode,
 		"env", &envValue,
 		"ports", &portsValue,
 		"volumes", &volumesValue,
@@ -171,7 +169,7 @@ func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gosta
 		return nil, err
 	}
 	builder(thread).dependencies = append(builder(thread).dependencies, Dependency{
-		Ref: ref, Name: name, Image: image, Mode: mode, Env: env, Ports: ports, Volumes: volumes,
+		Ref: ref, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes,
 	})
 	return gostarlark.None, nil
 }

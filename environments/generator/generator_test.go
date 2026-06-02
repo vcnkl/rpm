@@ -28,8 +28,8 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Ref: "a:serve", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 		},
 		Dependencies: []spec.Dependency{
-			{Ref: "z:postgres", Name: "postgres", Image: "postgres:16", Mode: models.DependencyInstanceModeShared, Ports: []string{"5433:5432", "5432:5432"}, Volumes: []string{"z:/z", "a:/a"}},
-			{Ref: "a:redis", Name: "redis", Image: "redis:7", Mode: models.DependencyInstanceModeDedicated},
+			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}},
+			{Ref: "redis", Name: "redis", Image: "redis:7"},
 		},
 		BeforeTargets: []spec.BeforeTarget{
 			{Ref: "z:before", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
@@ -37,11 +37,11 @@ func TestRenderDeterministicOutput(t *testing.T) {
 		},
 		RuntimeUnits: []spec.RuntimeUnit{
 			{Id: "z:serve", Kind: "target"},
-			{Id: "a:redis", Kind: "dependency"},
+			{Id: "redis", Kind: "dependency"},
 			{Id: "a:before", Kind: "before"},
 			{Id: "z:before", Kind: "before"},
 			{Id: "a:serve", Kind: "target"},
-			{Id: "z:postgres", Kind: "dependency"},
+			{Id: "postgres", Kind: "dependency"},
 		},
 		ReloadPolicy: models.ReloadPolicy{Enabled: true, Debounce: "100ms"},
 	}
@@ -52,13 +52,13 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, string(first), string(second))
-	assert.Less(t, strings.Index(string(first), `ref = "a:redis"`), strings.Index(string(first), `ref = "z:postgres"`))
+	assert.Less(t, strings.Index(string(first), `ref = "postgres"`), strings.Index(string(first), `ref = "redis"`))
 	assert.Less(t, strings.Index(string(first), `ref = "z:before"`), strings.Index(string(first), `ref = "a:before"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:before"`), strings.Index(string(first), `ref = "a:serve"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
 	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432"]`)
-	assert.Contains(t, string(first), `volumes = ["a:/a", "z:/z"]`)
-	assert.Contains(t, string(first), `order = ["a:before", "z:before", "a:redis", "z:postgres", "a:serve", "z:serve"]`)
+	assert.Contains(t, string(first), `volumes = ["/a", "/z"]`)
+	assert.Contains(t, string(first), `order = ["a:before", "z:before", "postgres", "redis", "a:serve", "z:serve"]`)
 }
 
 func TestRenderGoldenLocalStack(t *testing.T) {
@@ -117,7 +117,7 @@ func resolveLocalStack(t *testing.T, repoRoot string) (*rootconfig.Config, *spec
 func newGeneratorRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	bundleRoot := filepath.Join(repoRoot, "api")
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte("name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n"), 0644))

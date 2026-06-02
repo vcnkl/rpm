@@ -14,9 +14,47 @@ var (
 	ErrMissingTargetCommand = errors.New("missing target command")
 	ErrInvalidTargetRef     = errors.New("invalid target ref")
 	ErrInvalidDependency    = errors.New("invalid dependency")
+	ErrMissingProjectName   = errors.New("missing project name")
 )
 
-func validateBundleConfig(cfg *BundleConfig, path string) error {
+func validateRepoConfig(cfg *RepoConfig, path string) error {
+	if strings.TrimSpace(cfg.Project.Name) == "" {
+		return errors.Wrapf(ErrMissingProjectName, "%s project.name is required", path)
+	}
+
+	deps := make(map[string]bool)
+	for _, dep := range cfg.Dependencies {
+		if dep.Name == "" {
+			return errors.Wrap(ErrInvalidDependency, "repo dependency with missing name")
+		}
+		if deps[dep.Name] {
+			return fmt.Errorf("duplicate dependency name %q in repo.yml", dep.Name)
+		}
+		deps[dep.Name] = true
+		if err := ValidateDependencyImage(dep.Image); err != nil {
+			return errors.Wrapf(err, "%s", dep.Name)
+		}
+		volumes := make(map[string]bool)
+		for _, volume := range dep.Volumes {
+			if strings.TrimSpace(volume) == "" {
+				return errors.Wrapf(ErrInvalidDependency, "%s has empty volume path", dep.Name)
+			}
+			if strings.Contains(volume, ":") {
+				return errors.Wrapf(ErrInvalidDependency, "%s volume %q must be a container path only", dep.Name, volume)
+			}
+			if !strings.HasPrefix(volume, "/") {
+				return errors.Wrapf(ErrInvalidDependency, "%s volume %q must be an absolute container path", dep.Name, volume)
+			}
+			if volumes[volume] {
+				return errors.Wrapf(ErrInvalidDependency, "%s has duplicate volume path %q", dep.Name, volume)
+			}
+			volumes[volume] = true
+		}
+	}
+	return nil
+}
+
+func validateBundleConfig(cfg *BundleConfig, path string, repoDeps map[string]bool) error {
 	if cfg.Name == "" {
 		return errors.Wrapf(ErrMissingBundleName, "%s", path)
 	}
@@ -41,19 +79,16 @@ func validateBundleConfig(cfg *BundleConfig, path string) error {
 	}
 
 	deps := make(map[string]bool)
-	for _, dep := range cfg.Env.Dependencies {
-		if dep.Name == "" {
-			return errors.Wrapf(ErrInvalidDependency, "%s has dependency with missing name", cfg.Name)
+	for _, dep := range cfg.Env.Deps {
+		if dep == "" {
+			return errors.Wrapf(ErrInvalidDependency, "%s has empty env.deps entry", cfg.Name)
 		}
-		if deps[dep.Name] {
-			return fmt.Errorf("duplicate dependency name %q in bundle %q", dep.Name, cfg.Name)
+		if deps[dep] {
+			return fmt.Errorf("duplicate dependency ref %q in bundle %q", dep, cfg.Name)
 		}
-		deps[dep.Name] = true
-		if err := ValidateDependencyImage(dep.Image); err != nil {
-			return errors.Wrapf(err, "%s:%s", cfg.Name, dep.Name)
-		}
-		if !dep.Mode.Valid() {
-			return fmt.Errorf("invalid dependency mode %q for %s:%s", dep.Mode, cfg.Name, dep.Name)
+		deps[dep] = true
+		if !repoDeps[dep] {
+			return errors.Wrapf(ErrInvalidDependency, "%s references unknown dependency %q", cfg.Name, dep)
 		}
 	}
 

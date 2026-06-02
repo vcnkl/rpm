@@ -242,7 +242,7 @@ before:
 
 func TestLoadBlueprintTargetsSorted(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "api", "api", "serve")
 	writeBundle(t, repoRoot, "worker", "worker", "run")
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
@@ -276,13 +276,19 @@ targets:
 
 func TestLoadBlueprintDependencyPolicy(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+dependencies:
+  - name: postgres
+    image: postgres:16
+`), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
 env:
-  dependencies:
-    - name: postgres
-      image: postgres:16
+  deps:
+    - postgres
 targets:
   - name: serve
     cmd: echo serve
@@ -295,7 +301,7 @@ targets:
 dependencies:
   enabled: true
   include:
-    - api:postgres
+    - postgres
   exclude: []
 `)
 
@@ -303,7 +309,7 @@ dependencies:
 
 	require.NoError(t, err)
 	assert.True(t, blueprint.DependencyPolicy.Enabled)
-	assert.Equal(t, []string{"api:postgres"}, blueprint.DependencyPolicy.Include)
+	assert.Equal(t, []string{"postgres"}, blueprint.DependencyPolicy.Include)
 	assert.Empty(t, blueprint.DependencyPolicy.Exclude)
 }
 
@@ -316,7 +322,7 @@ targets:
 dependencies:
   enabled: true
   include:
-    - api:postgres
+    - postgres
 `)
 
 	_, err := envconfig.LoadBlueprint(repo, "local")
@@ -342,8 +348,8 @@ func TestMarshalBlueprintDeterministicYAML(t *testing.T) {
 		Before: []string{"go-app:migrate"},
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: true,
-			Include: []string{"ts-app:mailhog", "go-app:postgres"},
-			Exclude: []string{"python-app:redis"},
+			Include: []string{"mailhog", "postgres"},
+			Exclude: []string{"redis"},
 		},
 		Variables: map[string]string{"ZED": "last", "LOG_LEVEL": "debug"},
 	}
@@ -369,25 +375,31 @@ targets:
 dependencies:
     enabled: true
     include:
-        - go-app:postgres
-        - ts-app:mailhog
+        - mailhog
+        - postgres
     exclude:
-        - python-app:redis
+        - redis
 variables:
     LOG_LEVEL: debug
     ZED: last
 `, string(data))
 }
 
-func TestBundleDependencyDefaultsAndValidation(t *testing.T) {
+func TestBundleDependencyRefs(t *testing.T) {
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+dependencies:
+  - name: postgres
+    image: postgres:16
+`), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
 env:
-  dependencies:
-    - name: postgres
-      image: postgres:16
+  deps:
+    - postgres
 targets:
   - name: serve
     cmd: echo serve
@@ -396,7 +408,7 @@ targets:
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 
 	require.Len(t, repo.Bundles()["api"].Dependencies, 1)
-	assert.Equal(t, "shared", string(repo.Bundles()["api"].Dependencies[0].Mode))
+	assert.Equal(t, "postgres", repo.Bundles()["api"].Dependencies[0])
 }
 
 func TestBundleDependencyImageValidation(t *testing.T) {
@@ -418,7 +430,7 @@ func TestBundleDependencyImageValidation(t *testing.T) {
 func newTestRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "api", "api", "serve")
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, ".rpm", "envs"), 0755))
 	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
@@ -427,7 +439,7 @@ func newTestRepo(t *testing.T) *rootconfig.Config {
 func newTestRepoWithTargets(t *testing.T, targets ...string) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	content := "name: api\ntargets:\n"
 	for _, target := range targets {
 		content += "  - name: " + target + "\n    cmd: echo " + target + "\n"

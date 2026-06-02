@@ -41,10 +41,13 @@ func loadRepoConfig(path string) *RepoConfig {
 	}
 
 	repo.SetDefaults()
+	if err := validateRepoConfig(&repo, path); err != nil {
+		panic(fmt.Sprintf("invalid repo.yml at %s: %v", path, err))
+	}
 	return &repo
 }
 
-func discoverBundles(repoRoot string, ignore []string) []*models.Bundle {
+func discoverBundles(repoRoot string, ignore []string, repoDeps map[string]bool) []*models.Bundle {
 	var paths []string
 
 	err := filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
@@ -95,15 +98,18 @@ func discoverBundles(repoRoot string, ignore []string) []*models.Bundle {
 
 	bundles := make([]*models.Bundle, 0, len(paths))
 	for _, path := range paths {
-		bundles = append(bundles, loadBundleConfig(path, repoRoot))
+		bundles = append(bundles, loadBundleConfig(path, repoRoot, repoDeps))
 	}
 	return bundles
 }
 
-func loadBundleConfig(path string, repoRoot string) *models.Bundle {
+func loadBundleConfig(path string, repoRoot string, repoDeps map[string]bool) *models.Bundle {
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
 		panic(fmt.Sprintf("failed to read rpm.yml at %s: %v", path, err))
+	}
+	if k.Exists("env.dependencies") {
+		panic(fmt.Sprintf("invalid rpm.yml at %s: env.dependencies is not supported; use env.deps with repo.yml dependencies", path))
 	}
 
 	var cfg BundleConfig
@@ -112,7 +118,7 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 	}
 
 	cfg.SetDefaults()
-	if err := validateBundleConfig(&cfg, path); err != nil {
+	if err := validateBundleConfig(&cfg, path, repoDeps); err != nil {
 		panic(fmt.Sprintf("invalid rpm.yml at %s: %v", path, err))
 	}
 
@@ -151,16 +157,15 @@ func loadBundleConfig(path string, repoRoot string) *models.Bundle {
 		}
 		bundle.Targets = append(bundle.Targets, target)
 	}
-	for _, dep := range cfg.Env.Dependencies {
-		bundle.Dependencies = append(bundle.Dependencies, models.EnvironmentDependency{
-			Name:    dep.Name,
-			Image:   dep.Image,
-			Mode:    dep.Mode,
-			Env:     dep.Env,
-			Ports:   dep.Ports,
-			Volumes: dep.Volumes,
-		})
-	}
+	bundle.Dependencies = append(bundle.Dependencies, cfg.Env.Deps...)
 
 	return bundle
+}
+
+func repoDependencyRefs(repo *RepoConfig) map[string]bool {
+	refs := make(map[string]bool, len(repo.Dependencies))
+	for _, dep := range repo.Dependencies {
+		refs[dep.Name] = true
+	}
+	return refs
 }

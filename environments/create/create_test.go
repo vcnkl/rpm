@@ -29,7 +29,7 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
-	assert.Equal(t, []string{"go-app:postgres", "ts-app:mailhog"}, blueprint.DependencyPolicy.Include)
+	assert.Equal(t, []string{"mailhog", "postgres"}, blueprint.DependencyPolicy.Include)
 }
 
 func TestRunCreateNonInteractiveRequiresNameAndTargets(t *testing.T) {
@@ -156,7 +156,18 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 func newTestRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+dependencies:
+  - name: postgres
+    image: postgres:16
+  - name: mailhog
+    image: mailhog/mailhog:v1.0.1
+  - name: redis
+    image: redis:7
+`), 0644))
 	writeBundle(t, repoRoot, "go-app", "postgres")
 	writeBundle(t, repoRoot, "ts-app", "mailhog")
 	writeBundle(t, repoRoot, "python-app", "redis")
@@ -174,9 +185,8 @@ func writeBundle(t *testing.T, repoRoot string, name string, dep string) {
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: `+name+`
 env:
-  dependencies:
-    - name: `+dep+`
-      image: postgres:16
+  deps:
+    - `+dep+`
 targets:
   - name: `+echoTarget+`
     cmd: echo `+echoTarget+`

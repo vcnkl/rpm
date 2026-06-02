@@ -34,6 +34,7 @@ func TestEnvHelpListsSubcommands(t *testing.T) {
 	assert.Contains(t, output, "render")
 	assert.Contains(t, output, "up")
 	assert.Contains(t, output, "down")
+	assert.Contains(t, output, "prune")
 }
 
 func TestEnvUpHelpListsFlags(t *testing.T) {
@@ -171,7 +172,7 @@ func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
 func newCommandTestRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
 	writeCommandBundle(t, repoRoot, "go-app", []string{"echo-123"})
 	writeCommandBundle(t, repoRoot, "ts-app", []string{"web"})
 	writeCommandBundle(t, repoRoot, "python-app", []string{"echo-456"})

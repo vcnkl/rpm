@@ -1,4 +1,23 @@
+project:
+  name: sample-repo
 shell: /bin/sh
 env:
   GLOBAL_VAR: "global_value"
   PROJECT_NAME: "sample-repo"
+dependencies:
+  - name: postgres
+    image: postgres:16
+    env:
+      POSTGRES_PASSWORD: example
+    ports:
+      - "5432"
+    volumes:
+      - /var/lib/postgresql/data
+  - name: redis
+    image: redis:7
+    ports:
+      - "6379:6379"
+  - name: mailhog
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025"

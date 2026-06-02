@@ -19,9 +19,9 @@ targets:
 dependencies:
     enabled: true
     include:
-        - go-app:postgres
-        - python-app:redis
-        - ts-app:mailhog
+        - mailhog
+        - postgres
+        - redis
     exclude: []
 variables:
     LOG_LEVEL: debug

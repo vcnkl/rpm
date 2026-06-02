@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
@@ -51,7 +52,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 
 	runner := envruntime.NewRunner(envruntime.Options{
 		ProcessRunner:    envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err),
-		DependencyRunner: runtimedocker.NewCLI(runtimedocker.Options{}),
+		DependencyRunner: a.dockerCLI(),
 		ReloadWatcher:    envruntime.NewWatcherFactory(),
 		EventSink:        sink,
 		ControlActions:   controlActions,
@@ -123,10 +124,28 @@ func (a *EnvAction) Down(ctx context.Context, opts EnvDownOptions) error {
 	}
 
 	runner := envruntime.NewRunner(envruntime.Options{
-		DependencyRunner: runtimedocker.NewCLI(runtimedocker.Options{}),
+		DependencyRunner: a.dockerCLI(),
 		EventSink:        envruntime.NewLineEventSink(a.out, a.err),
 	})
 	return runner.Down(ctx, plan)
+}
+
+type EnvPruneOptions struct {
+	Blueprint string
+}
+
+func (a *EnvAction) Prune(_ context.Context, opts EnvPruneOptions) error {
+	return runtimedocker.PruneVolumeCache(a.volumeCachePath(), opts.Blueprint)
+}
+
+func (a *EnvAction) dockerCLI() *runtimedocker.CLI {
+	return runtimedocker.NewCLI(runtimedocker.Options{
+		VolumeNamer: runtimedocker.NewFileVolumeNamer(a.volumeCachePath(), a.config.Repo().Project.Name),
+	})
+}
+
+func (a *EnvAction) volumeCachePath() string {
+	return filepath.Join(a.config.CacheDir(), "env-volumes.json")
 }
 
 type renderRuntimeOptions struct {

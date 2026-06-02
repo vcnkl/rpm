@@ -24,6 +24,7 @@ func EnvCmd() *cli.Command {
 			envRenderCmd(),
 			envUpCmd(),
 			envDownCmd(),
+			envPruneCmd(),
 		},
 	}
 }
@@ -326,6 +327,25 @@ func envDownCmd() *cli.Command {
 			cfg := loadConfig(ctx)
 			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
 			if err := action.Down(ctx.Context, actions.EnvDownOptions{Blueprint: ctx.Args().First()}); err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			return nil
+		},
+	}
+}
+
+func envPruneCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "prune",
+		Usage:     "Reset cached runtime resources for an environment blueprint",
+		ArgsUsage: "<blueprint>",
+		Action: func(ctx *cli.Context) error {
+			if ctx.Args().Len() == 0 {
+				return cli.Exit("error: blueprint argument required", 1)
+			}
+			cfg := loadConfig(ctx)
+			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
+			if err := action.Prune(ctx.Context, actions.EnvPruneOptions{Blueprint: ctx.Args().First()}); err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
 			return nil

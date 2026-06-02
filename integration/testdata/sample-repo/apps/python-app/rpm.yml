@@ -3,12 +3,8 @@ name: python-app
 env:
   variables:
     PYTHON_VAR: "python_value"
-  dependencies:
-    - name: redis
-      image: redis:7
-      mode: dedicated
-      ports:
-        - "6379:6379"
+  deps:
+    - redis
 
 targets:
   - name: echo-456

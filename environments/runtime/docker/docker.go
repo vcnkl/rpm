@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -36,6 +35,7 @@ type PortAllocator interface {
 type Options struct {
 	Backend       Backend
 	PortAllocator PortAllocator
+	VolumeNamer   VolumeNamer
 }
 
 type ContainerSpec struct {
@@ -50,6 +50,7 @@ type ContainerSpec struct {
 type CLI struct {
 	backend       Backend
 	portAllocator PortAllocator
+	volumeNamer   VolumeNamer
 }
 
 func NewCLI(opts Options) *CLI {
@@ -61,7 +62,11 @@ func NewCLI(opts Options) *CLI {
 	if portAllocator == nil {
 		portAllocator = ephemeralPortAllocator{}
 	}
-	return &CLI{backend: backend, portAllocator: portAllocator}
+	volumeNamer := opts.VolumeNamer
+	if volumeNamer == nil {
+		volumeNamer = NewMemoryVolumeNamer("rpm")
+	}
+	return &CLI{backend: backend, portAllocator: portAllocator, volumeNamer: volumeNamer}
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
@@ -70,13 +75,17 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		return err
 	}
 	for _, dep := range plan.Dependencies {
-		for _, volume := range volumeNames(dep.Volumes) {
+		volumeNames, volumeBinds, err := c.resolveVolumes(ctx, blueprint, dep)
+		if err != nil {
+			return err
+		}
+		for _, volume := range volumeNames {
 			if err := c.backend.EnsureVolume(ctx, volume); err != nil {
 				return err
 			}
 		}
-		for _, name := range containerNames(blueprint, dep, plan.Targets) {
-			spec, err := c.containerSpec(ctx, network, name, dep)
+		for _, name := range containerNames(blueprint, dep) {
+			spec, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
 				return err
 			}
@@ -90,7 +99,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
 	for _, dep := range plan.Dependencies {
-		for _, name := range containerNames(blueprint, dep, plan.Targets) {
+		for _, name := range containerNames(blueprint, dep) {
 			if err := c.backend.RemoveContainer(ctx, name); err != nil && !isMissingDockerResource(err) {
 				return err
 			}
@@ -267,23 +276,39 @@ func networkName(blueprint string) string {
 	return "rpm-" + sanitize(blueprint)
 }
 
-func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency) (ContainerSpec, error) {
+func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency, volumeBinds []string) (ContainerSpec, error) {
 	ports, err := c.publishPorts(ctx, dep.Ports)
 	if err != nil {
 		return ContainerSpec{}, err
 	}
-	volumes := dep.Volumes
-	if len(volumes) > 0 {
-		volumes = append([]string{}, dep.Volumes...)
-	}
-	return ContainerSpec{
+	spec := ContainerSpec{
 		Name:    name,
 		Image:   dep.Image,
 		Network: network,
 		Env:     dep.Env,
 		Ports:   ports,
-		Volumes: volumes,
-	}, nil
+	}
+	if len(volumeBinds) > 0 {
+		spec.Volumes = append([]string{}, volumeBinds...)
+	}
+	return spec, nil
+}
+
+func (c *CLI) resolveVolumes(ctx context.Context, blueprint string, dep envstarlark.Dependency) ([]string, []string, error) {
+	if len(dep.Volumes) == 0 {
+		return nil, nil, nil
+	}
+	volumeNames := make([]string, 0, len(dep.Volumes))
+	volumeBinds := make([]string, 0, len(dep.Volumes))
+	for _, path := range dep.Volumes {
+		name, err := c.volumeNamer.Name(ctx, blueprint, dep.Name, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		volumeNames = append(volumeNames, name)
+		volumeBinds = append(volumeBinds, name+":"+path)
+	}
+	return volumeNames, volumeBinds, nil
 }
 
 func (c *CLI) publishPorts(ctx context.Context, ports []string) ([]string, error) {
@@ -305,44 +330,8 @@ func singleContainerPort(port string) bool {
 	return port != "" && !strings.Contains(port, ":")
 }
 
-func containerNames(blueprint string, dep envstarlark.Dependency, targets []envstarlark.TargetProcess) []string {
-	if dep.Mode != "dedicated" {
-		return []string{networkName(blueprint) + "-" + sanitize(dep.Ref)}
-	}
-	prefix := depBundle(dep.Ref) + ":"
-	names := []string{}
-	for _, target := range targets {
-		if strings.HasPrefix(target.Ref, prefix) {
-			names = append(names, networkName(blueprint)+"-"+sanitize(dep.Ref)+"-"+sanitize(target.Ref))
-		}
-	}
-	if len(names) == 0 {
-		names = append(names, networkName(blueprint)+"-"+sanitize(dep.Ref))
-	}
-	sort.Strings(names)
-	return names
-}
-
-func depBundle(ref string) string {
-	bundle, _, ok := strings.Cut(ref, ":")
-	if !ok {
-		return ref
-	}
-	return bundle
-}
-
-func volumeNames(volumes []string) []string {
-	seen := make(map[string]bool)
-	names := make([]string, 0, len(volumes))
-	for _, volume := range volumes {
-		name, _, _ := strings.Cut(volume, ":")
-		if name != "" && !strings.Contains(name, "/") && !seen[name] {
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
+func containerNames(blueprint string, dep envstarlark.Dependency) []string {
+	return []string{networkName(blueprint) + "-" + sanitize(dep.Name)}
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)

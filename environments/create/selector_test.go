@@ -51,10 +51,10 @@ func TestBeforeSelectItemsShowOtherTargets(t *testing.T) {
 }
 
 func TestDependencySelectItemsGroupByBundle(t *testing.T) {
-	items := dependencySelectItems([]string{"web:redis", "api:postgres"}, []string{"web:redis"})
+	items := dependencySelectItems([]string{"redis", "postgres"}, []string{"redis"})
 
-	assert.Equal(t, []string{"api", "api:postgres", "web", "web:redis"}, labels(items))
-	assert.Equal(t, []string{"web:redis"}, selectedRefs(items))
+	assert.Equal(t, []string{"dependencies", "postgres", "redis"}, labels(items))
+	assert.Equal(t, []string{"redis"}, selectedRefs(items))
 }
 
 func labels(items []envtui.SelectionItem) []string {

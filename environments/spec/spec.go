@@ -51,7 +51,6 @@ type Dependency struct {
 	Ref     string
 	Name    string
 	Image   string
-	Mode    models.DependencyInstanceMode
 	Env     []EnvVar
 	Ports   []string
 	Volumes []string
@@ -87,6 +86,7 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	}
 
 	bundleSeen := make(map[string]bool)
+	dependencySeen := make(map[string]bool)
 	addBundle := func(bundle *models.Bundle) {
 		if bundleSeen[bundle.Name] {
 			return
@@ -97,10 +97,14 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			Env:  envVars(bundle.Env),
 		})
 		bundleSeen[bundle.Name] = true
-		for _, dep := range bundle.Dependencies {
-			ref := bundle.Name + ":" + dep.Name
-			if dependencyIncluded(blueprint.DependencyPolicy, ref) {
-				resolved.Dependencies = append(resolved.Dependencies, dependency(bundle.Name, dep))
+		for _, ref := range bundle.Dependencies {
+			if dependencyIncluded(blueprint.DependencyPolicy, ref) && !dependencySeen[ref] {
+				dep, ok := repo.EnvironmentDependencies()[ref]
+				if !ok {
+					continue
+				}
+				resolved.Dependencies = append(resolved.Dependencies, dependency(dep))
+				dependencySeen[ref] = true
 			}
 		}
 	}
@@ -299,16 +303,15 @@ func ResolveDotenvFiles(repoRoot string, bundle *models.Bundle, target *models.T
 	return files
 }
 
-func dependency(bundleName string, dep models.EnvironmentDependency) Dependency {
+func dependency(dep models.EnvironmentDependency) Dependency {
 	ports := append([]string{}, dep.Ports...)
 	volumes := append([]string{}, dep.Volumes...)
 	sort.Strings(ports)
 	sort.Strings(volumes)
 	return Dependency{
-		Ref:     bundleName + ":" + dep.Name,
+		Ref:     dep.Name,
 		Name:    dep.Name,
 		Image:   dep.Image,
-		Mode:    dep.Mode,
 		Env:     envVars(dep.Env),
 		Ports:   ports,
 		Volumes: volumes,

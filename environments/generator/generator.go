@@ -35,7 +35,6 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 			{name: "ref", value: quote(dep.Ref)},
 			{name: "name", value: quote(dep.Name)},
 			{name: "image", value: quote(dep.Image)},
-			{name: "mode", value: quote(string(dep.Mode))},
 			{name: "env", value: envDict(dep.Env)},
 			{name: "ports", value: stringList(dep.Ports)},
 			{name: "volumes", value: stringList(dep.Volumes)},

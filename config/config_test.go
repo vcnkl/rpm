@@ -21,8 +21,9 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			name:    "all defaults",
 			initial: RepoConfig{},
 			expected: RepoConfig{
-				Shell: "/bin/sh",
-				Env:   map[string]string{},
+				Shell:        "/bin/sh",
+				Env:          map[string]string{},
+				Dependencies: []EnvironmentDependency{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -36,8 +37,9 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Shell: "/bin/bash",
 			},
 			expected: RepoConfig{
-				Shell: "/bin/bash",
-				Env:   map[string]string{},
+				Shell:        "/bin/bash",
+				Env:          map[string]string{},
+				Dependencies: []EnvironmentDependency{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -51,8 +53,9 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Env: map[string]string{"FOO": "bar"},
 			},
 			expected: RepoConfig{
-				Shell: "/bin/sh",
-				Env:   map[string]string{"FOO": "bar"},
+				Shell:        "/bin/sh",
+				Env:          map[string]string{"FOO": "bar"},
+				Dependencies: []EnvironmentDependency{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -70,8 +73,9 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				},
 			},
 			expected: RepoConfig{
-				Shell: "/bin/sh",
-				Env:   map[string]string{},
+				Shell:        "/bin/sh",
+				Env:          map[string]string{},
+				Dependencies: []EnvironmentDependency{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02 15:04:05",
@@ -88,6 +92,7 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 
 			assert.Equal(t, tt.expected.Shell, cfg.Shell)
 			assert.Equal(t, tt.expected.Env, cfg.Env)
+			assert.Equal(t, tt.expected.Dependencies, cfg.Dependencies)
 			assert.Equal(t, tt.expected.Logger.DateTime.Format, cfg.Logger.DateTime.Format)
 		})
 	}
@@ -122,7 +127,7 @@ func TestBundleConfig_SetDefaults(t *testing.T) {
 			cfg.SetDefaults()
 
 			assert.NotNil(t, cfg.Env.Variables)
-			assert.NotNil(t, cfg.Env.Dependencies)
+			assert.NotNil(t, cfg.Env.Deps)
 		})
 	}
 }
@@ -416,7 +421,7 @@ func TestConfig_AllTargetsSorted(t *testing.T) {
 
 func TestNewConfigWithRepoFile(t *testing.T) {
 	repoRoot := t.TempDir()
-	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/bash\n"), 0644))
+	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/bash\n"), 0644))
 	requireNoError(t, os.MkdirAll(filepath.Join(repoRoot, "services", "api"), 0755))
 	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "services", "api", "rpm.yml"), []byte(`
 name: api
@@ -439,7 +444,7 @@ func TestDiscoverBundlesSortedByRepoRelativePath(t *testing.T) {
 	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "z", "rpm.yml"), []byte("name: z\ntargets:\n  - name: serve\n    cmd: echo z\n"), 0644))
 	requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "a", "rpm.yml"), []byte("name: a\ntargets:\n  - name: serve\n    cmd: echo a\n"), 0644))
 
-	bundles := discoverBundles(repoRoot, nil)
+	bundles := discoverBundles(repoRoot, nil, map[string]bool{})
 
 	assert.Equal(t, []string{"a", "z"}, []string{bundles[0].Name, bundles[1].Name})
 }
@@ -491,13 +496,6 @@ func TestNewConfigValidationErrors(t *testing.T) {
 			message: "duplicate target name",
 		},
 		{
-			name: "duplicate dependency names",
-			files: map[string]string{
-				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\n      image: postgres:16\n    - name: postgres\n      image: postgres:16\ntargets:\n  - name: serve\n    cmd: echo serve\n",
-			},
-			message: "duplicate dependency name",
-		},
-		{
 			name: "missing target command",
 			files: map[string]string{
 				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n",
@@ -526,25 +524,56 @@ func TestNewConfigValidationErrors(t *testing.T) {
 			message: "invalid target ref",
 		},
 		{
-			name: "invalid dependency mode",
+			name: "legacy bundle dependencies unsupported",
 			files: map[string]string{
-				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\n      image: postgres:16\n      mode: global\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\n      image: postgres:16\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
-			message: "invalid dependency mode",
+			message: "env.dependencies is not supported",
 		},
 		{
-			name: "missing dependency image",
+			name:    "missing project name",
+			files:   map[string]string{"repo.yml": "shell: /bin/sh\n", "api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n"},
+			message: "project.name is required",
+		},
+		{
+			name: "duplicate repo dependency names",
 			files: map[string]string{
-				"api/rpm.yml": "name: api\nenv:\n  dependencies:\n    - name: postgres\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n    image: postgres:16\n  - name: postgres\n    image: postgres:16\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "duplicate dependency name",
+		},
+		{
+			name: "missing repo dependency image",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "invalid dependency image",
+		},
+		{
+			name: "repo dependency volume bind rejected",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n    image: postgres:16\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "container path only",
+		},
+		{
+			name: "unknown env dependency ref",
+			files: map[string]string{
+				"api/rpm.yml": "name: api\nenv:\n  deps:\n    - postgres\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "unknown dependency",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
-			requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+			if _, ok := tt.files["repo.yml"]; !ok {
+				requireNoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+			}
 			for path, content := range tt.files {
 				fullPath := filepath.Join(repoRoot, path)
 				requireNoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))

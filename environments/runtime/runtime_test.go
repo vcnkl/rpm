@@ -196,7 +196,7 @@ func TestUpDeclaresRuntimeUnitsBeforeDependencyStartup(t *testing.T) {
 	err := runner.Up(context.Background(), plan)
 
 	require.NoError(t, err)
-	assert.Equal(t, "event unit_declared api:postgres", order[0])
+	assert.Equal(t, "event unit_declared postgres", order[0])
 	assert.Equal(t, "event unit_declared api:migrate", order[1])
 	assert.Equal(t, "event unit_declared api:serve", order[2])
 	assert.Equal(t, "deps up", order[3])
@@ -323,7 +323,7 @@ func testPlan() *envstarlark.RuntimePlan {
 			LiveReload: envstarlark.ReloadPolicy{Enabled: true, Debounce: "10ms"},
 		},
 		Dependencies: []envstarlark.Dependency{
-			{Ref: "api:postgres", Name: "postgres", Image: "postgres:16", Mode: "shared"},
+			{Ref: "postgres", Name: "postgres", Image: "postgres:16"},
 		},
 		Targets: []envstarlark.TargetProcess{
 			{
@@ -337,7 +337,7 @@ func testPlan() *envstarlark.RuntimePlan {
 		Watches: []envstarlark.Watch{
 			{Target: "api:serve", Roots: []string{"/repo/api"}, Reload: true, Enabled: true},
 		},
-		RunOrder: []string{"api:postgres", "api:serve"},
+		RunOrder: []string{"postgres", "api:serve"},
 	}
 }
 

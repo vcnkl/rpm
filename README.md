@@ -9,7 +9,7 @@ RPM has a clear split between build/test/run orchestration and environment runti
 - `rpm build` builds filesystem-output targets only.
 - `rpm env create`, `rpm env render` and `rpm env up` handle local environment workflows.
 - Target suffixes are ordinary target name text; environment membership comes from explicit blueprint target refs.
-- Environment containers are runtime dependencies declared under bundle `dependencies`.
+- Environment containers are runtime dependencies declared once in `repo.yml` and referenced by name from bundles.
 
 ## Installation
 
@@ -22,9 +22,22 @@ wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
 ### repo.yml (Repository Root)
 
 ```yaml
+project:
+  name: 'my-project'          # Required; used for generated runtime resource names
 shell: '/usr/bin/env bash'    # Default shell for commands
 env:                          # Global environment variables
   PROJECT: 'my-project'
+dependencies:                 # Docker runtime dependencies available to bundles
+  - name: postgres
+    image: postgres:16
+    env:
+      POSTGRES_PASSWORD: example
+    ports:
+      - "5432"
+    volumes:                  # Container data paths only; Docker volume names are generated
+      - /var/lib/postgresql/data
+  - name: redis
+    image: redis:7
 logger:
   datetime:
     format: '2006-01-02T15:04:05Z07:00' # Go time layout for rpm log timestamps
@@ -65,24 +78,14 @@ targets:
         - '*.log'
 ```
 
-Bundle-level environment dependencies are declared under `env.dependencies` and use tagged Docker image references. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
+Bundle environment dependency requirements are declared under `env.deps` as names that must exist in top-level `repo.yml` `dependencies`. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
 
 ```yaml
 name: api
 env:
-  dependencies:
-    - name: postgres
-      image: postgres:16
-      mode: shared            # one container per blueprint dependency
-      env:
-        POSTGRES_PASSWORD: example
-      ports:
-        - "5432"
-      volumes:
-        - postgres-data:/var/lib/postgresql/data
-    - name: redis
-      image: redis:7
-      mode: dedicated         # one container per selected target in this bundle
+  deps:
+    - postgres
+    - redis
 targets:
   - name: echo-123
     cmd: go run .
@@ -116,6 +119,7 @@ rpm env validate <blueprint>
 rpm env render <blueprint> [--out path]
 rpm env up <blueprint> [--non-interactive] [--no-reload] [--no-deps] [--render-only]
 rpm env down <blueprint>
+rpm env prune <blueprint>
 ```
 
 Environment blueprints are committed YAML files stored in `.rpm/envs/<name>.yml`. They select explicit target refs and dependency refs; RPM does not infer dev targets from suffixes.
@@ -138,14 +142,14 @@ targets:
 dependencies:
   enabled: true
   include:
-    - go-app:postgres
-    - python-app:redis
+    - postgres
+    - redis
   exclude: []
 variables:
   LOG_LEVEL: debug
 ```
 
-Use `rpm env create --non-interactive <name> --target bundle:target --before bundle:migrate --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `before` entries run after dependencies and before target processes; they reference existing `rpm.yml` targets. `dependencies.include` limits which bundle dependencies start, `dependencies.exclude` removes refs from the selected dependency set, and `dependencies.enabled: false` skips containers completely. A single bare dependency port such as `"5432"` is published on a dynamically selected ephemeral host port; explicit mappings such as `"5432:5432"` are preserved. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and target reload defaults come from each bundle target's `config.reload`; `targets[].reload` is an explicit override that is still gated by the blueprint-level live reload switch.
+Use `rpm env create --non-interactive <name> --target bundle:target --before bundle:migrate --deps` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `before` entries run after dependencies and before target processes; they reference existing `rpm.yml` targets. `dependencies.include` limits which named dependencies start, `dependencies.exclude` removes names from the selected dependency set, and `dependencies.enabled: false` skips containers completely. A single bare dependency port such as `"5432"` is published on a dynamically selected ephemeral host port; explicit mappings such as `"5432:5432"` are preserved. Docker volume names are generated and cached in `.rpm/cache/env-volumes.json`; `rpm env prune <blueprint>` resets cached volume names for one blueprint. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and target reload defaults come from each bundle target's `config.reload`; `targets[].reload` is an explicit override that is still gated by the blueprint-level live reload switch.
 
 `rpm env render <blueprint>` validates the blueprint, resolves repo/bundle/target config, and writes deterministic Starlark under `.rpm/cache/starlark/<blueprint>/env.star`. `rpm env up <blueprint>` runs the same validation and render pipeline, evaluates the generated Starlark runtime plan, starts dependency containers, runs `before` targets, starts target processes, and restarts affected target processes when watched files change. In interactive mode it opens the centralized Ink TUI from `ui/env-tui`; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
 

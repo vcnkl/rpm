@@ -35,7 +35,7 @@ func NewConfigWithRepoFile(path string) *Config {
 
 func newConfig(repoRoot string, repoFile string) *Config {
 	repo := loadRepoConfig(repoFile)
-	bundles := discoverBundles(repoRoot, repo.Ignore)
+	bundles := discoverBundles(repoRoot, repo.Ignore, repoDependencyRefs(repo))
 
 	bundleMap := make(map[string]*models.Bundle, len(bundles))
 	for _, b := range bundles {
@@ -101,6 +101,10 @@ func (c *Config) BuildsPath() string {
 	return c.buildsPath
 }
 
+func (c *Config) CacheDir() string {
+	return c.cacheDir
+}
+
 func (c *Config) DagPath() string {
 	return c.dagPath
 }
@@ -111,6 +115,20 @@ func (c *Config) Repo() *RepoConfig {
 
 func (c *Config) Bundles() map[string]*models.Bundle {
 	return c.bundles
+}
+
+func (c *Config) EnvironmentDependencies() map[string]models.EnvironmentDependency {
+	deps := make(map[string]models.EnvironmentDependency, len(c.repo.Dependencies))
+	for _, dep := range c.repo.Dependencies {
+		deps[dep.Name] = models.EnvironmentDependency{
+			Name:    dep.Name,
+			Image:   dep.Image,
+			Env:     dep.Env,
+			Ports:   dep.Ports,
+			Volumes: dep.Volumes,
+		}
+	}
+	return deps
 }
 
 func (c *Config) AllTargets() []*models.Target {

@@ -81,13 +81,13 @@ test('orders dependencies before before targets and targets, and hides dependenc
 	const units = [
 		{ ref: 'web:serve', kind: 'target' as const, status: 'running' as const, output: [] },
 		{ ref: 'api:migrate', kind: 'before' as const, status: 'pending' as const, output: [] },
-		{ ref: 'api:postgres', kind: 'dependency' as const, status: 'running' as const, output: [] },
+		{ ref: 'postgres', kind: 'dependency' as const, status: 'running' as const, output: [] },
 		{ ref: 'api:serve', kind: 'target' as const, status: 'failed' as const, output: [] }
 	]
 
 	assert.deepEqual(
 		orderUnits(units).map((unit) => unit.ref),
-		['api:postgres', 'api:migrate', 'api:serve', 'web:serve']
+		['postgres', 'api:migrate', 'api:serve', 'web:serve']
 	)
 	assert.deepEqual(
 		orderUnits(units, false).map((unit) => unit.ref),
@@ -99,7 +99,7 @@ test('summarizes runtime units for the header', () => {
 	const units = [
 		{ ref: 'web:serve', kind: 'target' as const, status: 'running' as const, output: [] },
 		{ ref: 'api:migrate', kind: 'before' as const, status: 'pending' as const, output: [] },
-		{ ref: 'api:postgres', kind: 'dependency' as const, status: 'failed' as const, output: [] },
+		{ ref: 'postgres', kind: 'dependency' as const, status: 'failed' as const, output: [] },
 		{ ref: 'api:serve', kind: 'target' as const, status: 'reloading' as const, output: [] }
 	]
 

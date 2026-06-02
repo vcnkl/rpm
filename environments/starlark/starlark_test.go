@@ -19,11 +19,11 @@ import (
 func TestInterpretGeneratedPlan(t *testing.T) {
 	src := []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {"LOG_LEVEL": "debug"})
-rpm_dependency(ref = "api:postgres", name = "postgres", image = "postgres:16", mode = "shared", env = {"POSTGRES_PASSWORD": "example"}, ports = ["5432:5432"], volumes = ["pg:/data"])
+rpm_dependency(ref = "postgres", name = "postgres", image = "postgres:16", env = {"POSTGRES_PASSWORD": "example"}, ports = ["5432:5432"], volumes = ["/data"])
 rpm_before_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {"A": "b"})
 rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {"A": "b"}, reload = True)
 rpm_watch(target = "api:serve", roots = ["/repo/api"], ignore = ["bin/**"], reload = True, enabled = True)
-rpm_run(order = ["api:postgres", "api:serve"])
+rpm_run(order = ["postgres", "api:serve"])
 `)
 
 	plan, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
@@ -31,7 +31,7 @@ rpm_run(order = ["api:postgres", "api:serve"])
 	require.NoError(t, err)
 	assert.Equal(t, "local", plan.Environment.Name)
 	assert.Equal(t, "debug", plan.Environment.Variables["LOG_LEVEL"])
-	assert.Equal(t, "api:postgres", plan.Dependencies[0].Ref)
+	assert.Equal(t, "postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"5432:5432"}, plan.Dependencies[0].Ports)
 	assert.Equal(t, "api:migrate", plan.BeforeTargets[0].Ref)
 	assert.Equal(t, "go run migrations", plan.BeforeTargets[0].Command)
@@ -40,7 +40,7 @@ rpm_run(order = ["api:postgres", "api:serve"])
 	assert.Equal(t, "/repo/api", plan.Targets[0].WorkingDir)
 	assert.True(t, plan.Targets[0].Reload)
 	assert.Equal(t, []string{"/repo/api"}, plan.Watches[0].Roots)
-	assert.Equal(t, []string{"api:postgres", "api:serve"}, plan.RunOrder)
+	assert.Equal(t, []string{"postgres", "api:serve"}, plan.RunOrder)
 }
 
 func TestInterpretGeneratorOutput(t *testing.T) {
@@ -66,7 +66,7 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "local", plan.Environment.Name)
-	assert.Equal(t, "api:postgres", plan.Dependencies[0].Ref)
+	assert.Equal(t, "postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"api:migrate"}, []string{plan.BeforeTargets[0].Ref})
 	assert.Equal(t, "api:serve", plan.Targets[0].Ref)
 	assert.Equal(t, "8080", plan.Targets[0].Env["APP_PORT"])
@@ -132,18 +132,26 @@ spin()
 func newStarlarkRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\nenv:\n  GLOBAL_VAR: global\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+env:
+  GLOBAL_VAR: global
+dependencies:
+  - name: postgres
+    image: postgres:16
+    ports:
+      - "5432:5432"
+`), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "api"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "api", "rpm.yml"), []byte(`
 name: api
 env:
   variables:
     BUNDLE_VAR: bundle
-  dependencies:
-    - name: postgres
-      image: postgres:16
-      ports:
-        - "5432:5432"
+  deps:
+    - postgres
 targets:
   - name: migrate
     cmd: go run migrations

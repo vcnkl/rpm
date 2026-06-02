@@ -5,7 +5,7 @@ type Bundle struct {
 	Path         string
 	Env          map[string]string
 	Targets      []*Target
-	Dependencies []EnvironmentDependency
+	Dependencies []string
 }
 
 func (b *Bundle) Target(name string) (*Target, bool) {

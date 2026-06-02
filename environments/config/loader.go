@@ -193,7 +193,7 @@ func (c *BlueprintConfig) Validate(repo *rootconfig.Config) error {
 	}
 	dependencies := dependencyRefs(repo)
 	for _, ref := range append(append([]string{}, c.Dependencies.Include...), c.Dependencies.Exclude...) {
-		if !validBlueprintTargetRef(ref) {
+		if ref == "" {
 			return fmt.Errorf("invalid blueprint dependency ref %q", ref)
 		}
 		if !dependencies[ref] {
@@ -262,10 +262,8 @@ func sortBlueprint(blueprint *models.EnvironmentBlueprint) {
 
 func dependencyRefs(repo *rootconfig.Config) map[string]bool {
 	refs := make(map[string]bool)
-	for _, bundle := range repo.Bundles() {
-		for _, dep := range bundle.Dependencies {
-			refs[bundle.Name+":"+dep.Name] = true
-		}
+	for name := range repo.EnvironmentDependencies() {
+		refs[name] = true
 	}
 	return refs
 }

@@ -352,12 +352,7 @@ func validateTargetRef(repo *rootconfig.Config, ref string) error {
 }
 
 func validateDependencyRefs(repo *rootconfig.Config, refs []string) error {
-	known := make(map[string]bool)
-	for bundleName, bundle := range repo.Bundles() {
-		for _, dep := range bundle.Dependencies {
-			known[bundleName+":"+dep.Name] = true
-		}
-	}
+	known := dependencySet(repo)
 	for _, ref := range refs {
 		if !known[ref] {
 			return errors.Wrapf(envconfig.ErrUnknownDependencyRef, "%s", ref)
@@ -377,13 +372,17 @@ func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enable
 			bundles[bundle] = true
 		}
 	}
+	seen := make(map[string]bool)
 	var refs []string
 	for name, bundle := range repo.Bundles() {
 		if !bundles[name] {
 			continue
 		}
 		for _, dep := range bundle.Dependencies {
-			refs = append(refs, name+":"+dep.Name)
+			if !seen[dep] {
+				seen[dep] = true
+				refs = append(refs, dep)
+			}
 		}
 	}
 	sort.Strings(refs)
@@ -392,13 +391,19 @@ func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enable
 
 func dependencyRefs(repo *rootconfig.Config) []string {
 	var refs []string
-	for bundleName, bundle := range repo.Bundles() {
-		for _, dep := range bundle.Dependencies {
-			refs = append(refs, bundleName+":"+dep.Name)
-		}
+	for ref := range dependencySet(repo) {
+		refs = append(refs, ref)
 	}
 	sort.Strings(refs)
 	return refs
+}
+
+func dependencySet(repo *rootconfig.Config) map[string]bool {
+	known := make(map[string]bool)
+	for name := range repo.EnvironmentDependencies() {
+		known[name] = true
+	}
+	return known
 }
 
 func targetMap(targets []models.EnvironmentTarget) map[string]models.EnvironmentTarget {
