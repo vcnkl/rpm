@@ -2,6 +2,7 @@
 .build/
 node_modules/
 **/.yarn/install-state.gz
+ui/env-tui/dist/
 
 # Temporary files
 tmp/

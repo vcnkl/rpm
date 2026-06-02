@@ -4,6 +4,7 @@ project_name: rpm
 
 before:
   hooks:
+    - sh -c 'cd ui/env-tui && yarn install --immutable && yarn build'
     - go mod tidy
 
 builds:
@@ -21,6 +22,8 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/vcnkl/rpm/cmd.Version={{.Version}}
+    tags:
+      - tui_bundle
 
 archives:
   - id: rpm

@@ -9,10 +9,12 @@ import (
 	"strconv"
 	"strings"
 
+	"context"
 	rootconfig "github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/dag"
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/models"
+	envtui "github.com/vcnkl/rpm/ui/env-tui"
 
 	"github.com/pkg/errors"
 )
@@ -161,23 +163,16 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if err != nil {
 		return err
 	}
-	reload, err := prompt.askBool("Enable live reload", true)
+	disableReload, err := prompt.askBool("Disable live reload", false)
 	if err != nil {
 		return err
 	}
-	targetReload := make(map[string]bool)
-	for _, ref := range targets {
-		value, err := prompt.askBool("Reload "+ref, reload)
-		if err != nil {
-			return err
-		}
-		targetReload[ref] = value
-	}
+	reload := !disableReload
 	deps, err := prompt.askBool("Enable dependencies", false)
 	if err != nil {
 		return err
 	}
-	blueprint, err := buildBlueprint(repo, name, targets, reload, targetReload, deps)
+	blueprint, err := buildBlueprint(repo, name, targets, reload, nil, deps)
 	if err != nil {
 		return err
 	}
@@ -207,27 +202,16 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if err != nil {
 		return err
 	}
-	reload, err := prompt.askBool("Enable live reload", blueprint.ReloadPolicy.Enabled)
+	disableReload, err := prompt.askBool("Disable live reload", !blueprint.ReloadPolicy.Enabled)
 	if err != nil {
 		return err
 	}
-	targetReload := make(map[string]bool)
-	for _, ref := range targets {
-		fallback := reload
-		if target, ok := existingTargets[ref]; ok && target.Reload != nil {
-			fallback = *target.Reload
-		}
-		value, err := prompt.askBool("Reload "+ref, fallback)
-		if err != nil {
-			return err
-		}
-		targetReload[ref] = value
-	}
+	reload := !disableReload
 	deps, err := prompt.askBool("Enable dependencies", blueprint.DependencyPolicy.Enabled)
 	if err != nil {
 		return err
 	}
-	next, err := buildBlueprint(repo, blueprint.Name, targets, reload, targetReload, deps)
+	next, err := buildBlueprint(repo, blueprint.Name, targets, reload, nil, deps)
 	if err != nil {
 		return err
 	}
@@ -455,8 +439,12 @@ func (p prompt) askBool(label string, fallback bool) (bool, error) {
 }
 
 func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, selected []string) ([]string, error) {
-	if selector, ok := newTerminalSelector(p.in, p.out); ok {
-		return selector.selectTargets("Select environment targets", targets, graph, selected)
+	if envtui.CanSelect(p.in, p.out) {
+		return envtui.Select(context.Background(), p.in, p.out, envtui.SelectionRequest{
+			Title:      "Select environment targets",
+			Items:      targetSelectItems(targets, graph, selected),
+			RequireOne: true,
+		})
 	}
 	for i, target := range targets {
 		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
@@ -494,8 +482,11 @@ func (p prompt) chooseTargets(targets []*models.Target, graph *dag.Graph, select
 }
 
 func (p prompt) chooseDependencies(label string, refs []string, selected []string) ([]string, error) {
-	if selector, ok := newTerminalSelector(p.in, p.out); ok {
-		return selector.selectDependencies(label, refs, selected)
+	if envtui.CanSelect(p.in, p.out) {
+		return envtui.Select(context.Background(), p.in, p.out, envtui.SelectionRequest{
+			Title: label,
+			Items: dependencySelectItems(refs, selected),
+		})
 	}
 	answer, err := p.askDefault(label, strings.Join(selected, ","))
 	if err != nil {

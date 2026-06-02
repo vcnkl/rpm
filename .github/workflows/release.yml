@@ -39,6 +39,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -116,9 +116,12 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			}
 		}
 
-		reload := blueprint.ReloadPolicy.Enabled
-		if bpTarget.Reload != nil {
-			reload = *bpTarget.Reload
+		reload := false
+		if blueprint.ReloadPolicy.Enabled {
+			reload = target.Config.Reload
+			if bpTarget.Reload != nil {
+				reload = *bpTarget.Reload
+			}
 		}
 		resolved.Targets = append(resolved.Targets, Target{
 			Ref:         target.ID(),

@@ -1,4 +1,4 @@
-package tui
+package envtui
 
 import (
 	"bufio"
@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/pkg/errors"
@@ -52,7 +53,7 @@ func NewBridge(stdout io.Writer, stderr io.Writer) *Bridge {
 func (b *Bridge) Run(ctx context.Context, events <-chan envruntime.Event, controller Controller) error {
 	nodePath, err := b.lookupNode()
 	if err != nil {
-		return errors.Wrap(err, "node is required for interactive env up; rerun with --non-interactive to disable the React TUI")
+		return errors.Wrap(err, "node is required for interactive env up; rerun with --non-interactive to disable the TUI")
 	}
 	scriptPath, cleanup, err := b.materializeScript()
 	if err != nil {
@@ -135,10 +136,14 @@ func (b *Bridge) lookupNode() (string, error) {
 func (b *Bridge) materializeScript() (string, func(), error) {
 	data := b.script
 	if data == nil {
-		var err error
-		data, err = bundleFS.ReadFile(BundlePath())
-		if err != nil {
-			return "", func() {}, err
+		if embeddedBundle != nil {
+			data = embeddedBundle
+		} else {
+			path, err := sourceBundlePath()
+			if err != nil {
+				return "", func() {}, err
+			}
+			return path, func() {}, nil
 		}
 	}
 	dir, err := os.MkdirTemp("", "rpm-env-tui-*")
@@ -151,6 +156,18 @@ func (b *Bridge) materializeScript() (string, func(), error) {
 		return "", func() {}, err
 	}
 	return path, func() { os.RemoveAll(dir) }, nil
+}
+
+func sourceBundlePath() (string, error) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", errors.New("failed to resolve env TUI source path")
+	}
+	path := filepath.Join(filepath.Dir(filename), "dist", "index.js")
+	if _, err := os.Stat(path); err != nil {
+		return "", errors.Wrap(err, "env TUI bundle is missing; run `cd ui/env-tui && yarn build`")
+	}
+	return path, nil
 }
 
 func EncodeEvents(ctx context.Context, writer io.WriteCloser, events <-chan envruntime.Event) error {

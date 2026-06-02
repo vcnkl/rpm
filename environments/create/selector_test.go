@@ -1,12 +1,14 @@
 package create
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/models"
+	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
 func TestTargetSelectItemsDefaultEnvSuffixes(t *testing.T) {
@@ -20,7 +22,7 @@ func TestTargetSelectItemsDefaultEnvSuffixes(t *testing.T) {
 	items := targetSelectItems(targets, graph, nil)
 
 	assert.Equal(t, []string{"api:web_dev", "worker:jobs_serve"}, selectedRefs(items))
-	assert.Equal(t, "env candidates / tier 0", items[0].label)
+	assert.Equal(t, "env candidates / tier 0", items[0].Label)
 }
 
 func TestTargetSelectItemsUseExistingSelectionForEdit(t *testing.T) {
@@ -46,44 +48,31 @@ func TestTargetSelectItemsTierByDependencyGraph(t *testing.T) {
 
 	tiers := map[string]int{}
 	for _, item := range items {
-		if !item.header {
-			tiers[item.ref] = item.tier
+		if !item.Header {
+			tiers[item.Ref] = item.Tier
 		}
 	}
 	assert.Equal(t, 0, tiers["api:build"])
 	assert.Equal(t, 1, tiers["api:web_dev"])
 }
 
-func TestSelectorModelMovesAndTogglesSelectableItems(t *testing.T) {
-	model := selectorModel{
-		items: []selectItem{
-			{label: "header", header: true},
-			{ref: "api:one"},
-			{label: "header 2", header: true},
-			{ref: "api:two"},
-		},
-	}
-	model.cursor = model.firstSelectable()
-
-	assert.Equal(t, 1, model.cursor)
-	model.move(1)
-	assert.Equal(t, 3, model.cursor)
-	model.toggle()
-
-	assert.Equal(t, []string{"api:two"}, model.selectedRefs())
-}
-
 func TestDependencySelectItemsGroupByBundle(t *testing.T) {
 	items := dependencySelectItems([]string{"web:redis", "api:postgres"}, []string{"web:redis"})
 
-	assert.Equal(t, "api", items[0].label)
-	assert.Equal(t, "web", items[2].label)
+	assert.Equal(t, "api", items[0].Label)
+	assert.Equal(t, "web", items[2].Label)
 	assert.Equal(t, []string{"web:redis"}, selectedRefs(items))
 }
 
-func selectedRefs(items []selectItem) []string {
-	model := selectorModel{items: items}
-	return model.selectedRefs()
+func selectedRefs(items []envtui.SelectionItem) []string {
+	var refs []string
+	for _, item := range items {
+		if item.Selected && !item.Header {
+			refs = append(refs, item.Ref)
+		}
+	}
+	sort.Strings(refs)
+	return refs
 }
 
 func target(bundle string, name string, deps []string) *models.Target {

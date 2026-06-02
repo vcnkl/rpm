@@ -187,7 +187,28 @@ func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	assert.Equal(t, []string{"a:serve", "z:serve"}, []string{resolved.Targets[0].Ref, resolved.Targets[1].Ref})
 }
 
-func TestResolveUsesTargetReloadOverride(t *testing.T) {
+func TestResolveUsesBundleTargetReloadConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
+	writeBundleWithReload(t, repoRoot, "api", false)
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name: "local",
+		ReloadPolicy: models.ReloadPolicy{
+			Enabled: true,
+		},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve", Env: map[string]string{}},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.False(t, resolved.Targets[0].Reload)
+}
+
+func TestResolveTargetReloadOverrideIsGatedByGlobalPolicy(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("shell: /bin/sh\n"), 0644))
 	writeBundle(t, repoRoot, "api", "api")
@@ -206,7 +227,7 @@ func TestResolveUsesTargetReloadOverride(t *testing.T) {
 	resolved, err := spec.Resolve(repo, blueprint)
 
 	require.NoError(t, err)
-	assert.True(t, resolved.Targets[0].Reload)
+	assert.False(t, resolved.Targets[0].Reload)
 }
 
 func writeBundle(t *testing.T, repoRoot string, name string, envValue string) {
@@ -214,6 +235,20 @@ func writeBundle(t *testing.T, repoRoot string, name string, envValue string) {
 	bundleRoot := filepath.Join(repoRoot, name)
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte("name: "+name+"\nenv:\n  NAME: "+envValue+"\ntargets:\n  - name: serve\n    cmd: echo serve\n"), 0644))
+}
+
+func writeBundleWithReload(t *testing.T, repoRoot string, name string, reload bool) {
+	t.Helper()
+	bundleRoot := filepath.Join(repoRoot, name)
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte("name: "+name+"\ntargets:\n  - name: serve\n    cmd: echo serve\n    config:\n      reload: "+boolString(reload)+"\n"), 0644))
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func envMap(env []spec.EnvVar) map[string]string {

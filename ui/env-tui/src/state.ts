@@ -120,6 +120,84 @@ export function visibleWindow<T>(items: T[], selected: number, height: number): 
 	return { start, rows: items.slice(start, start + height) }
 }
 
+export type SelectionItem = {
+	ref?: string
+	label: string
+	detail?: string
+	group?: string
+	tier?: number
+	selected?: boolean
+	defaults?: boolean
+	header?: boolean
+	muted?: boolean
+}
+
+export type SelectionRequest = {
+	title: string
+	items: SelectionItem[]
+	requireOne?: boolean
+}
+
+export type SelectionState = {
+	title: string
+	items: SelectionItem[]
+	cursor: number
+}
+
+export type SelectionKeyAction =
+	| { type: 'select'; delta: number }
+	| { type: 'toggle' }
+	| { type: 'confirm' }
+	| { type: 'cancel' }
+	| { type: 'none' }
+
+export function initialSelectionState(request: SelectionRequest): SelectionState {
+	const cursor = request.items.findIndex((item) => !item.header)
+	return { title: request.title, items: request.items, cursor: Math.max(0, cursor) }
+}
+
+export function reduceSelectionAction(state: SelectionState, action: SelectionKeyAction): SelectionState {
+	if (action.type === 'select') return moveSelection(state, action.delta)
+	if (action.type === 'toggle') return toggleSelection(state)
+	return state
+}
+
+export function selectedSelectionRefs(state: SelectionState): string[] {
+	return state.items
+		.filter((item) => item.selected && !item.header && item.ref)
+		.map((item) => item.ref as string)
+		.sort()
+}
+
+export function actionForSelectionKey(
+	input: string,
+	key: { upArrow?: boolean; downArrow?: boolean; return?: boolean; escape?: boolean }
+): SelectionKeyAction {
+	if (key.upArrow || input === 'k') return { type: 'select', delta: -1 }
+	if (key.downArrow || input === 'j') return { type: 'select', delta: 1 }
+	if (input === ' ') return { type: 'toggle' }
+	if (key.return) return { type: 'confirm' }
+	if (key.escape) return { type: 'cancel' }
+	return { type: 'none' }
+}
+
+function moveSelection(state: SelectionState, delta: number): SelectionState {
+	let next = state.cursor
+	for (;;) {
+		next += delta
+		if (next < 0 || next >= state.items.length) return state
+		if (!state.items[next].header) return { ...state, cursor: next }
+	}
+}
+
+function toggleSelection(state: SelectionState): SelectionState {
+	const item = state.items[state.cursor]
+	if (!item || item.header) return state
+	const items = state.items.slice()
+	items[state.cursor] = { ...item, selected: !item.selected }
+	return { ...state, items }
+}
+
 export type KeyAction =
 	| { type: 'select'; delta: number }
 	| { type: 'restart' }

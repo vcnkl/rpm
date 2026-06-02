@@ -80,7 +80,7 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123,ts-app:web\n\n\n\nn\n"),
+		In:   strings.NewReader("go-app:echo-123,ts-app:web\n\nn\n"),
 	})
 
 	require.NoError(t, err)
@@ -88,7 +88,24 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.True(t, blueprint.ReloadPolicy.Enabled)
+	assert.Nil(t, blueprint.Targets[0].Reload)
+	assert.Nil(t, blueprint.Targets[1].Reload)
 	assert.False(t, blueprint.DependencyPolicy.Enabled)
+}
+
+func TestRunCreateInteractiveCanGloballyDisableLiveReload(t *testing.T) {
+	repo := newTestRepo(t)
+
+	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
+		Name: "local-stack",
+		In:   strings.NewReader("go-app:echo-123\ny\nn\n"),
+	})
+
+	require.NoError(t, err)
+	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
+	require.NoError(t, err)
+	assert.False(t, blueprint.ReloadPolicy.Enabled)
+	assert.Nil(t, blueprint.Targets[0].Reload)
 }
 
 func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
@@ -102,7 +119,7 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 
 	err := envcreate.RunEdit(repo, envcreate.EditOptions{
 		Name: "local-stack",
-		In:   strings.NewReader("go-app:echo-123,python-app:echo-456\n\n\n\n\n\n\n"),
+		In:   strings.NewReader("go-app:echo-123,python-app:echo-456\n\n\n\n\n"),
 	})
 
 	require.NoError(t, err)

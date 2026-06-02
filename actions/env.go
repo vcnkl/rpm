@@ -12,7 +12,7 @@ import (
 	runtimedocker "github.com/vcnkl/rpm/environments/runtime/docker"
 	envspec "github.com/vcnkl/rpm/environments/spec"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
-	"github.com/vcnkl/rpm/environments/tui"
+	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
 type EnvAction struct {
@@ -42,9 +42,9 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 	}
 
 	sink := envruntime.EventSink(envruntime.NewLineEventSink(a.out, a.err))
-	tuiSink := (*tui.EventSink)(nil)
+	tuiSink := (*envtui.EventSink)(nil)
 	if !opts.NonInteractive {
-		tuiSink = tui.NewEventSink(512)
+		tuiSink = envtui.NewEventSink(512)
 		sink = tuiSink
 	}
 	controlActions := make(chan envruntime.ControlAction, 16)
@@ -59,7 +59,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		NoReload:         opts.NoReload,
 	})
 	if !opts.NonInteractive {
-		bridge := tui.NewBridge(a.out, stderrOrDefault(a.err))
+		bridge := envtui.NewBridge(a.out, stderrOrDefault(a.err))
 		runErr := make(chan error, 1)
 		go func() {
 			runErr <- runner.Up(ctx, plan)
@@ -80,26 +80,26 @@ type controlSender struct {
 }
 
 func (s controlSender) Restart(_ context.Context, ref string) error {
-	s.Send(tui.Action{Type: tui.ActionRestart, Ref: ref})
+	s.Send(envtui.Action{Type: envtui.ActionRestart, Ref: ref})
 	return nil
 }
 
 func (s controlSender) RestartAll(context.Context) error {
-	s.Send(tui.Action{Type: tui.ActionRestartAll})
+	s.Send(envtui.Action{Type: envtui.ActionRestartAll})
 	return nil
 }
 
 func (s controlSender) Stop() {
-	s.Send(tui.Action{Type: tui.ActionQuit})
+	s.Send(envtui.Action{Type: envtui.ActionQuit})
 }
 
-func (s controlSender) Send(action tui.Action) {
+func (s controlSender) Send(action envtui.Action) {
 	switch action.Type {
-	case tui.ActionRestart:
+	case envtui.ActionRestart:
 		s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: action.Ref}
-	case tui.ActionRestartAll:
+	case envtui.ActionRestartAll:
 		s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartAll}
-	case tui.ActionQuit:
+	case envtui.ActionQuit:
 		s.actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
 	}
 }

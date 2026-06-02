@@ -2,10 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
 	actionForKey,
+	actionForSelectionKey,
 	clampSelection,
 	initialState,
+	initialSelectionState,
 	orderUnits,
 	reduceEvent,
+	reduceSelectionAction,
+	selectedSelectionRefs,
 	summarizeUnits,
 	visibleWindow
 } from './state.ts'
@@ -74,4 +78,31 @@ test('maps keyboard input to TUI actions', () => {
 	assert.deepEqual(actionForKey('R', {}), { type: 'restart_all' })
 	assert.deepEqual(actionForKey('d', {}), { type: 'toggle_dependencies' })
 	assert.deepEqual(actionForKey('q', {}), { type: 'quit' })
+})
+
+test('selection model skips headers and toggles refs', () => {
+	let state = initialSelectionState({
+		title: 'Select targets',
+		items: [
+			{ label: 'group', header: true },
+			{ ref: 'api:build', label: 'api:build' },
+			{ label: 'tier', header: true },
+			{ ref: 'api:web_dev', label: 'api:web_dev', selected: true }
+		]
+	})
+
+	assert.equal(state.cursor, 1)
+	state = reduceSelectionAction(state, { type: 'select', delta: 1 })
+	assert.equal(state.cursor, 3)
+	state = reduceSelectionAction(state, { type: 'toggle' })
+
+	assert.deepEqual(selectedSelectionRefs(state), [])
+})
+
+test('maps keyboard input to selection actions', () => {
+	assert.deepEqual(actionForSelectionKey('j', {}), { type: 'select', delta: 1 })
+	assert.deepEqual(actionForSelectionKey('', { upArrow: true }), { type: 'select', delta: -1 })
+	assert.deepEqual(actionForSelectionKey(' ', {}), { type: 'toggle' })
+	assert.deepEqual(actionForSelectionKey('', { return: true }), { type: 'confirm' })
+	assert.deepEqual(actionForSelectionKey('', { escape: true }), { type: 'cancel' })
 })

@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "esbuild src/app.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=../../environments/tui/bundle/index.js --banner:js='#!/usr/bin/env node'",
+		"build": "esbuild src/app.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=dist/index.js --banner:js='#!/usr/bin/env node'",
 		"format": "prettier --write .",
 		"lint": "eslint .",
 		"test": "node --test src/*.test.ts",

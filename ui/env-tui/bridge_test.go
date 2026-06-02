@@ -1,4 +1,4 @@
-package tui_test
+package envtui_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
-	"github.com/vcnkl/rpm/environments/tui"
+	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
 func TestEncodeEventsWritesNDJSON(t *testing.T) {
@@ -19,7 +19,7 @@ func TestEncodeEventsWritesNDJSON(t *testing.T) {
 	close(events)
 	writer := &closeBuffer{}
 
-	err := tui.EncodeEvents(context.Background(), writer, events)
+	err := envtui.EncodeEvents(context.Background(), writer, events)
 
 	require.NoError(t, err)
 	assert.Equal(t, "{\"type\":\"process_started\",\"ref\":\"api:serve\"}\n{\"type\":\"process_output\",\"ref\":\"api:serve\",\"line\":\"hello\",\"stream\":\"stdout\"}\n", writer.String())
@@ -29,7 +29,7 @@ func TestDecodeActionsCallsController(t *testing.T) {
 	controller := &recordingController{}
 	input := bytes.NewBufferString("{\"type\":\"restart\",\"ref\":\"api:serve\"}\n{\"type\":\"restart_all\"}\n{\"type\":\"quit\"}\n")
 
-	err := tui.DecodeActions(context.Background(), input, controller)
+	err := envtui.DecodeActions(context.Background(), input, controller)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"restart api:serve", "restart_all", "stop"}, controller.calls)

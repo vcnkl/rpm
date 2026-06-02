@@ -1,15 +1,22 @@
 import React, { useEffect, useMemo, useReducer, useState } from 'react'
 import { Box, render, Text, useInput } from 'ink'
 import {
+	actionForSelectionKey,
 	actionForKey,
 	clampSelection,
 	initialState,
+	initialSelectionState,
 	orderUnits,
 	reduceEvent,
+	reduceSelectionAction,
+	selectedSelectionRefs,
 	summarizeUnits,
 	visibleWindow,
 	type EnvState,
 	type RuntimeEvent,
+	type SelectionItem,
+	type SelectionRequest,
+	type SelectionState,
 	type UnitState
 } from './state.js'
 import fs from 'node:fs'
@@ -130,6 +137,115 @@ function App() {
 	)
 }
 
+type SelectionAction = { type: 'select'; delta: number } | { type: 'toggle' }
+
+function selectionReducer(state: SelectionState, action: SelectionAction): SelectionState {
+	return reduceSelectionAction(state, action)
+}
+
+function SelectionApp() {
+	const [request, setRequest] = useState<SelectionRequest | null>(null)
+
+	useEffect(() => {
+		const input = fs.createReadStream('/dev/fd/3', { encoding: 'utf8' })
+		let buffer = ''
+		const onData = (chunk: string | Buffer) => {
+			buffer += chunk.toString()
+		}
+		const onEnd = () => {
+			setRequest(JSON.parse(buffer) as SelectionRequest)
+		}
+		input.on('data', onData)
+		input.on('end', onEnd)
+		return () => {
+			input.off('data', onData)
+			input.off('end', onEnd)
+			input.destroy()
+		}
+	}, [])
+
+	if (!request) return <Text color="gray">Loading selection...</Text>
+	return <SelectionView request={request} />
+}
+
+function SelectionView({ request }: { request: SelectionRequest }) {
+	const [state, dispatch] = useReducer(selectionReducer, request, initialSelectionState)
+	const viewport = useTerminalSize()
+	const bodyHeight = Math.max(4, viewport.rows - 4)
+	const windowed = visibleWindow(state.items, state.cursor, bodyHeight)
+	const selectedCount = selectedSelectionRefs(state).length
+
+	useInput((input, key) => {
+		const action = actionForSelectionKey(input, key)
+		if (action.type === 'select' || action.type === 'toggle') dispatch(action)
+		if (action.type === 'confirm') {
+			const refs = selectedSelectionRefs(state)
+			if (!request.requireOne || refs.length > 0) {
+				process.stdout.write(JSON.stringify({ refs }) + '\n')
+				process.exit(0)
+			}
+		}
+		if (action.type === 'cancel') {
+			process.exit(130)
+		}
+	})
+
+	return (
+		<Box width={viewport.columns} height={viewport.rows} flexDirection="column">
+			<Box width={viewport.columns} justifyContent="space-between">
+				<Text bold color="cyan">
+					{state.title}
+				</Text>
+				<Text color={request.requireOne && selectedCount === 0 ? 'red' : 'green'}>{selectedCount} selected</Text>
+			</Box>
+			<Box width={viewport.columns} justifyContent="space-between">
+				<Text color="gray">space toggle enter accept esc cancel</Text>
+				<Text color="gray">
+					{state.items.length > bodyHeight
+						? `${windowed.start + 1}-${windowed.start + windowed.rows.length}/${state.items.length}`
+						: `${state.items.length}`}
+				</Text>
+			</Box>
+			<Box width={viewport.columns} height={bodyHeight} flexDirection="column">
+				{windowed.rows.map((item, index) => {
+					const absolute = windowed.start + index
+					return (
+						<SelectionRow
+							key={`${absolute}:${item.ref ?? item.label}`}
+							item={item}
+							selected={absolute === state.cursor}
+						/>
+					)
+				})}
+			</Box>
+			<Box width={viewport.columns} justifyContent="space-between">
+				<Text color="gray">up/down or j/k move</Text>
+				<Text color={request.requireOne && selectedCount === 0 ? 'red' : 'gray'}>
+					{request.requireOne && selectedCount === 0 ? 'select at least one item' : 'ready'}
+				</Text>
+			</Box>
+		</Box>
+	)
+}
+
+function SelectionRow({ item, selected }: { item: SelectionItem; selected: boolean }) {
+	if (item.header) {
+		return (
+			<Text bold color={item.muted ? 'gray' : 'yellow'} wrap="truncate">
+				{item.label.toUpperCase()}
+			</Text>
+		)
+	}
+	const checked = item.selected ? '[x]' : '[ ]'
+	const color = selected ? undefined : item.selected || item.defaults ? 'green' : item.muted ? 'gray' : undefined
+	return (
+		<Text inverse={selected} color={color} wrap="truncate">
+			{selected ? '>' : ' '} {checked} {item.label}
+			{item.detail ? `  ${item.detail}` : ''}
+		</Text>
+	)
+}
+
 function UnitRow({ unit, selected }: { unit: UnitState; selected: boolean }) {
 	const kind = unit.kind === 'dependency' ? 'dep' : 'target'
 	return (
@@ -193,4 +309,4 @@ function send(action: { type: string; ref?: string }) {
 	process.stdout.write(JSON.stringify(action) + '\n')
 }
 
-render(<App />, { stdout: process.stderr })
+render(process.env.RPM_ENV_TUI_MODE === 'select' ? <SelectionApp /> : <App />, { stdout: process.stderr })
