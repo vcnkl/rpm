@@ -11,7 +11,6 @@ import (
 	"github.com/containerd/errdefs"
 	sdkclient "github.com/docker/go-sdk/client"
 	sdkcontainer "github.com/docker/go-sdk/container"
-	dockercontext "github.com/docker/go-sdk/context"
 	sdknetwork "github.com/docker/go-sdk/network"
 	sdkvolume "github.com/docker/go-sdk/volume"
 	"github.com/moby/moby/api/types/container"
@@ -56,7 +55,7 @@ type CLI struct {
 func NewCLI(opts Options) *CLI {
 	backend := opts.Backend
 	if backend == nil {
-		backend = sdkBackend{currentDockerContext: dockercontext.Current}
+		backend = sdkBackend{}
 	}
 	portAllocator := opts.PortAllocator
 	if portAllocator == nil {
@@ -80,7 +79,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			return err
 		}
 		for _, volume := range volumeNames {
-			if err := c.backend.EnsureVolume(ctx, volume); err != nil {
+			if err = c.backend.EnsureVolume(ctx, volume); err != nil {
 				return err
 			}
 		}
@@ -89,7 +88,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			if err != nil {
 				return err
 			}
-			if err := c.backend.RunContainer(ctx, spec); err != nil {
+			if err = c.backend.RunContainer(ctx, spec); err != nil {
 				return err
 			}
 		}
@@ -111,8 +110,10 @@ func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.Runt
 	return nil
 }
 
+type sdkClientFactory func(context.Context) (sdkclient.SDKClient, error)
+
 type sdkBackend struct {
-	currentDockerContext func() (string, error)
+	newClient sdkClientFactory
 }
 
 func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) error {
@@ -122,17 +123,17 @@ func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) error {
 	}
 	defer cli.Close()
 
-	if _, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err == nil {
+	if _, err = sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err == nil {
 		return nil
 	} else if !isMissingDockerResource(err) {
 		return errors.Wrapf(err, "find docker network %s", name)
 	}
-	if _, err := sdknetwork.New(ctx, sdknetwork.WithClient(cli), sdknetwork.WithName(name)); err == nil {
+	if _, err = sdknetwork.New(ctx, sdknetwork.WithClient(cli), sdknetwork.WithName(name)); err == nil {
 		return nil
 	} else if !isExistingDockerNetwork(err) {
 		return errors.Wrapf(err, "create docker network %s", name)
 	}
-	if _, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err != nil {
+	if _, err = sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err != nil {
 		return errors.Wrapf(err, "find existing docker network %s", name)
 	}
 	return nil
@@ -145,12 +146,12 @@ func (b sdkBackend) EnsureVolume(ctx context.Context, name string) error {
 	}
 	defer cli.Close()
 
-	if _, err := sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
+	if _, err = sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
 		return nil
 	} else if !isMissingDockerResource(err) {
 		return errors.Wrapf(err, "find docker volume %s", name)
 	}
-	if _, err := sdkvolume.New(ctx, sdkvolume.WithClient(cli), sdkvolume.WithName(name)); err != nil && !isExistingDockerVolume(err) {
+	if _, err = sdkvolume.New(ctx, sdkvolume.WithClient(cli), sdkvolume.WithName(name)); err != nil && !isExistingDockerVolume(err) {
 		return errors.Wrapf(err, "create docker volume %s", name)
 	}
 	return nil
@@ -180,7 +181,7 @@ func (b sdkBackend) RunContainer(ctx context.Context, spec ContainerSpec) error 
 			hostConfig.Binds = append(hostConfig.Binds, spec.Volumes...)
 		}))
 	}
-	if _, err := sdkcontainer.Run(ctx, opts...); err != nil {
+	if _, err = sdkcontainer.Run(ctx, opts...); err != nil {
 		return errors.Wrapf(err, "run docker container %s", spec.Name)
 	}
 	return nil
@@ -197,7 +198,7 @@ func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
+	if _, err = cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
 		return errors.Wrapf(err, "remove docker container %s", name)
 	}
 	return nil
@@ -214,22 +215,20 @@ func (b sdkBackend) RemoveNetwork(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := cli.NetworkRemove(ctx, found.ID, client.NetworkRemoveOptions{}); err != nil {
+	if _, err = cli.NetworkRemove(ctx, found.ID, client.NetworkRemoveOptions{}); err != nil {
 		return errors.Wrapf(err, "remove docker network %s", name)
 	}
 	return nil
 }
 
 func (b sdkBackend) client(ctx context.Context) (sdkclient.SDKClient, error) {
-	currentDockerContext := b.currentDockerContext
-	if currentDockerContext == nil {
-		currentDockerContext = dockercontext.Current
+	newClient := b.newClient
+	if newClient == nil {
+		newClient = func(ctx context.Context) (sdkclient.SDKClient, error) {
+			return sdkclient.New(ctx)
+		}
 	}
-	dockerContext, err := currentDockerContext()
-	if err != nil {
-		return nil, errors.Wrap(err, "resolve current docker context")
-	}
-	return sdkclient.New(ctx, sdkclient.WithDockerContext(dockerContext))
+	return newClient(ctx)
 }
 
 type ephemeralPortAllocator struct{}
