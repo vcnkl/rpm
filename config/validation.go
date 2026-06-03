@@ -2,11 +2,14 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/distribution/reference"
 	"github.com/pkg/errors"
 )
+
+var validPortEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var (
 	ErrMissingBundleName    = errors.New("missing bundle name")
@@ -34,6 +37,11 @@ func validateRepoConfig(cfg *RepoConfig, path string) error {
 		if err := ValidateDependencyImage(dep.Image); err != nil {
 			return errors.Wrapf(err, "%s", dep.Name)
 		}
+		for _, port := range dep.Ports {
+			if err := validateDependencyPort(port); err != nil {
+				return errors.Wrapf(err, "%s", dep.Name)
+			}
+		}
 		volumes := make(map[string]bool)
 		for _, volume := range dep.Volumes {
 			if strings.TrimSpace(volume) == "" {
@@ -49,6 +57,23 @@ func validateRepoConfig(cfg *RepoConfig, path string) error {
 				return errors.Wrapf(ErrInvalidDependency, "%s has duplicate volume path %q", dep.Name, volume)
 			}
 			volumes[volume] = true
+		}
+	}
+	return nil
+}
+
+func validateDependencyPort(port string) error {
+	port = strings.TrimSpace(port)
+	if port == "" {
+		return errors.Wrap(ErrInvalidDependency, "empty port")
+	}
+	if name, value, ok := strings.Cut(port, "="); ok {
+		name = strings.TrimSpace(name)
+		if !validPortEnvName.MatchString(name) {
+			return errors.Wrapf(ErrInvalidDependency, "invalid port env name %q", name)
+		}
+		if strings.TrimSpace(value) == "" {
+			return errors.Wrapf(ErrInvalidDependency, "empty port for env name %q", name)
 		}
 	}
 	return nil

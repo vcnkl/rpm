@@ -16,6 +16,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
+	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
@@ -68,32 +69,36 @@ func NewCLI(opts Options) *CLI {
 	return &CLI{backend: backend, portAllocator: portAllocator, volumeNamer: volumeNamer}
 }
 
-func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
+func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
 	network := networkName(blueprint)
 	if err := c.backend.EnsureNetwork(ctx, network); err != nil {
-		return err
+		return envruntime.DependencyStartup{}, err
 	}
+	startup := envruntime.DependencyStartup{Env: make(map[string]string)}
 	for _, dep := range plan.Dependencies {
 		volumeNames, volumeBinds, err := c.resolveVolumes(ctx, blueprint, dep)
 		if err != nil {
-			return err
+			return envruntime.DependencyStartup{}, err
 		}
 		for _, volume := range volumeNames {
 			if err = c.backend.EnsureVolume(ctx, volume); err != nil {
-				return err
+				return envruntime.DependencyStartup{}, err
 			}
 		}
 		for _, name := range containerNames(blueprint, dep) {
-			spec, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
+			spec, env, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
-				return err
+				return envruntime.DependencyStartup{}, err
 			}
 			if err = c.backend.RunContainer(ctx, spec); err != nil {
-				return err
+				return envruntime.DependencyStartup{}, err
+			}
+			for key, value := range env {
+				startup.Env[key] = value
 			}
 		}
 	}
-	return nil
+	return startup, nil
 }
 
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
@@ -275,10 +280,10 @@ func networkName(blueprint string) string {
 	return "rpm-" + sanitize(blueprint)
 }
 
-func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency, volumeBinds []string) (ContainerSpec, error) {
-	ports, err := c.publishPorts(ctx, dep.Ports)
+func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency, volumeBinds []string) (ContainerSpec, map[string]string, error) {
+	ports, env, err := c.publishPorts(ctx, dep)
 	if err != nil {
-		return ContainerSpec{}, err
+		return ContainerSpec{}, nil, err
 	}
 	spec := ContainerSpec{
 		Name:    name,
@@ -290,7 +295,7 @@ func (c *CLI) containerSpec(ctx context.Context, network string, name string, de
 	if len(volumeBinds) > 0 {
 		spec.Volumes = append([]string{}, volumeBinds...)
 	}
-	return spec, nil
+	return spec, env, nil
 }
 
 func (c *CLI) resolveVolumes(ctx context.Context, blueprint string, dep envstarlark.Dependency) ([]string, []string, error) {
@@ -310,23 +315,30 @@ func (c *CLI) resolveVolumes(ctx context.Context, blueprint string, dep envstarl
 	return volumeNames, volumeBinds, nil
 }
 
-func (c *CLI) publishPorts(ctx context.Context, ports []string) ([]string, error) {
-	if len(ports) == 0 {
-		return nil, nil
+func (c *CLI) publishPorts(ctx context.Context, dep envstarlark.Dependency) ([]string, map[string]string, error) {
+	if len(dep.Ports) == 0 {
+		return nil, nil, nil
 	}
-	if len(ports) != 1 || !singleContainerPort(ports[0]) {
-		return append([]string{}, ports...), nil
+	ports := make([]string, 0, len(dep.Ports))
+	env := make(map[string]string)
+	multiplePorts := len(dep.Ports) > 1
+	for _, item := range dep.Ports {
+		port, err := parsePort(item)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "%s port %q", dep.Name, item)
+		}
+		if port.Host == "" {
+			hostPort, err := c.portAllocator.Allocate(ctx)
+			if err != nil {
+				return nil, nil, errors.Wrap(err, "failed to allocate dependency host port")
+			}
+			port.Host = strconv.Itoa(hostPort)
+			port.HostPort = port.Host
+		}
+		ports = append(ports, port.Host+":"+port.Container)
+		env[port.EnvName(dep.Name, multiplePorts)] = port.HostPort
 	}
-	hostPort, err := c.portAllocator.Allocate(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to allocate dependency host port")
-	}
-	return []string{strconv.Itoa(hostPort) + ":" + ports[0]}, nil
-}
-
-func singleContainerPort(port string) bool {
-	port = strings.TrimSpace(port)
-	return port != "" && !strings.Contains(port, ":")
+	return ports, env, nil
 }
 
 func containerNames(blueprint string, dep envstarlark.Dependency) []string {
@@ -334,6 +346,87 @@ func containerNames(blueprint string, dep envstarlark.Dependency) []string {
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
+var invalidEnvNameChars = regexp.MustCompile(`[^A-Z0-9_]+`)
+var validEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+type portMapping struct {
+	Name      string
+	Host      string
+	HostPort  string
+	Container string
+}
+
+func (p portMapping) EnvName(dependency string, multiplePorts bool) string {
+	if p.Name != "" {
+		return p.Name
+	}
+	name := envSafeName(dependency) + "_PORT"
+	if multiplePorts {
+		name += "_" + containerPortNumber(p.Container)
+	}
+	return name
+}
+
+func parsePort(value string) (portMapping, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return portMapping{}, fmt.Errorf("empty port")
+	}
+	name := ""
+	if left, right, ok := strings.Cut(value, "="); ok {
+		name = strings.TrimSpace(left)
+		if !validEnvName.MatchString(name) {
+			return portMapping{}, fmt.Errorf("invalid env name %q", name)
+		}
+		value = strings.TrimSpace(right)
+		if value == "" {
+			return portMapping{}, fmt.Errorf("empty port")
+		}
+	}
+	if !strings.Contains(value, ":") {
+		if strings.TrimSpace(value) == "" {
+			return portMapping{}, fmt.Errorf("empty container port")
+		}
+		return portMapping{Name: name, Container: strings.TrimSpace(value)}, nil
+	}
+	index := strings.LastIndex(value, ":")
+	host := strings.TrimSpace(value[:index])
+	container := strings.TrimSpace(value[index+1:])
+	if host == "" || container == "" {
+		return portMapping{}, fmt.Errorf("invalid port mapping %q", value)
+	}
+	hostPort := host
+	if hostIndex := strings.LastIndex(host, ":"); hostIndex >= 0 {
+		hostPort = strings.TrimSpace(host[hostIndex+1:])
+	}
+	if hostPort == "" {
+		return portMapping{}, fmt.Errorf("invalid port mapping %q", value)
+	}
+	return portMapping{Name: name, Host: host, HostPort: hostPort, Container: container}, nil
+}
+
+func envSafeName(value string) string {
+	value = invalidEnvNameChars.ReplaceAllString(strings.ToUpper(value), "_")
+	value = strings.Trim(value, "_")
+	if value == "" {
+		return "DEPENDENCY"
+	}
+	if value[0] >= '0' && value[0] <= '9' {
+		value = "_" + value
+	}
+	return value
+}
+
+func containerPortNumber(value string) string {
+	value = strings.TrimSpace(value)
+	value, _, _ = strings.Cut(value, "/")
+	value = invalidEnvNameChars.ReplaceAllString(strings.ToUpper(value), "_")
+	value = strings.Trim(value, "_")
+	if value == "" {
+		return "PORT"
+	}
+	return value
+}
 
 func sanitize(value string) string {
 	value = invalidNameChars.ReplaceAllString(value, "-")

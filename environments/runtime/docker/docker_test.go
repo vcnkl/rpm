@@ -31,7 +31,7 @@ func TestUpStartsSharedDependencyWithNetworkVolumeEnvPortsAndBinds(t *testing.T)
 		}},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
@@ -47,6 +47,7 @@ func TestUpStartsSharedDependencyWithNetworkVolumeEnvPortsAndBinds(t *testing.T)
 		Ports:   []string{"5432:5432"},
 		Volumes: []string{"sample-repo-postgres-local-stack-123456:/var/lib/postgresql/data"},
 	}}, backend.containers)
+	assert.Equal(t, map[string]string{"POSTGRES_PORT": "5432"}, startup.Env)
 }
 
 func TestUpReusesExistingDockerNetwork(t *testing.T) {
@@ -60,7 +61,7 @@ func TestUpReusesExistingDockerNetwork(t *testing.T) {
 		}},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
@@ -72,13 +73,14 @@ func TestUpReusesExistingDockerNetwork(t *testing.T) {
 		Image:   "postgres:16",
 		Network: "rpm-local-stack",
 	}}, backend.containers)
+	assert.Empty(t, startup.Env)
 }
 
 func TestUpAllocatesDynamicHostPortForSingleContainerPort(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{
 		Backend: backend,
-		PortAllocator: fixedPortAllocator{
+		PortAllocator: &fixedPortAllocator{
 			port: 49152,
 		},
 	})
@@ -91,7 +93,7 @@ func TestUpAllocatesDynamicHostPortForSingleContainerPort(t *testing.T) {
 		}},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{{
@@ -100,13 +102,14 @@ func TestUpAllocatesDynamicHostPortForSingleContainerPort(t *testing.T) {
 		Network: "rpm-local-stack",
 		Ports:   []string{"49152:5432"},
 	}}, backend.containers)
+	assert.Equal(t, map[string]string{"POSTGRES_PORT": "49152"}, startup.Env)
 }
 
-func TestUpPreservesMultipleBarePorts(t *testing.T) {
+func TestUpAllocatesDynamicHostPortsForMultipleBarePorts(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{
 		Backend: backend,
-		PortAllocator: fixedPortAllocator{
+		PortAllocator: &fixedPortAllocator{
 			port: 49152,
 		},
 	})
@@ -119,22 +122,26 @@ func TestUpPreservesMultipleBarePorts(t *testing.T) {
 		}},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{{
 		Name:    "rpm-local-stack-mailhog",
 		Image:   "mailhog/mailhog:v1.0.1",
 		Network: "rpm-local-stack",
-		Ports:   []string{"1025", "8025"},
+		Ports:   []string{"49152:1025", "49153:8025"},
 	}}, backend.containers)
+	assert.Equal(t, map[string]string{
+		"MAILHOG_PORT_1025": "49152",
+		"MAILHOG_PORT_8025": "49153",
+	}, startup.Env)
 }
 
 func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{
 		Backend: backend,
-		PortAllocator: fixedPortAllocator{
+		PortAllocator: &fixedPortAllocator{
 			port: 49153,
 		},
 	})
@@ -159,7 +166,7 @@ func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 		},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{
@@ -176,6 +183,80 @@ func TestUpMixesExplicitAndDynamicDependencyPorts(t *testing.T) {
 			Ports:   []string{"49153:1025"},
 		},
 	}, backend.containers)
+	assert.Equal(t, map[string]string{
+		"REDIS_PORT":   "6379",
+		"MAILHOG_PORT": "49153",
+	}, startup.Env)
+}
+
+func TestUpUsesHostPortFromExplicitHostBinding(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "postgres",
+			Name:  "postgres",
+			Image: "postgres:16",
+			Ports: []string{"127.0.0.1:5433:5432"},
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
+	require.NoError(t, err)
+
+	assert.Equal(t, []docker.ContainerSpec{{
+		Name:    "rpm-local-stack-postgres",
+		Image:   "postgres:16",
+		Network: "rpm-local-stack",
+		Ports:   []string{"127.0.0.1:5433:5432"},
+	}}, backend.containers)
+	assert.Equal(t, map[string]string{"POSTGRES_PORT": "5433"}, startup.Env)
+}
+
+func TestUpUsesCustomPortEnvName(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := docker.NewCLI(docker.Options{
+		Backend: backend,
+		PortAllocator: &fixedPortAllocator{
+			port: 49152,
+		},
+	})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "mongodb",
+			Name:  "mongodb",
+			Image: "mongo:8.0.23-noble",
+			Ports: []string{"MONGO_PORT=27017"},
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
+	require.NoError(t, err)
+
+	assert.Equal(t, []docker.ContainerSpec{{
+		Name:    "rpm-local-stack-mongodb",
+		Image:   "mongo:8.0.23-noble",
+		Network: "rpm-local-stack",
+		Ports:   []string{"49152:27017"},
+	}}, backend.containers)
+	assert.Equal(t, map[string]string{"MONGO_PORT": "49152"}, startup.Env)
+}
+
+func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "mongodb",
+			Name:  "mongodb",
+			Image: "mongo:8.0.23-noble",
+			Ports: []string{"MONGO-PORT=27017"},
+		}},
+	}
+
+	_, err := runner.Up(context.Background(), "local-stack", plan)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid env name "MONGO-PORT"`)
 }
 
 func TestUpBuildsOneDockerContainerPerDependency(t *testing.T) {
@@ -194,12 +275,13 @@ func TestUpBuildsOneDockerContainerPerDependency(t *testing.T) {
 		},
 	}
 
-	err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{
 		{Name: "rpm-local-stack-redis", Image: "redis:7", Network: "rpm-local-stack"},
 	}, backend.containers)
+	assert.Empty(t, startup.Env)
 }
 
 func TestDownRemovesDependencyContainersAndNetwork(t *testing.T) {
@@ -304,11 +386,14 @@ func (b *recordingBackend) RemoveNetwork(_ context.Context, name string) error {
 }
 
 type fixedPortAllocator struct {
-	port int
+	port  int
+	calls int
 }
 
-func (a fixedPortAllocator) Allocate(context.Context) (int, error) {
-	return a.port, nil
+func (a *fixedPortAllocator) Allocate(context.Context) (int, error) {
+	port := a.port + a.calls
+	a.calls++
+	return port, nil
 }
 
 type fixedVolumeNamer struct {

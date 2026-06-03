@@ -31,8 +31,12 @@ type Process interface {
 }
 
 type DependencyRunner interface {
-	Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error
+	Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) (DependencyStartup, error)
 	Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error
+}
+
+type DependencyStartup struct {
+	Env map[string]string
 }
 
 type ReloadWatcher interface {
@@ -90,12 +94,13 @@ type Options struct {
 }
 
 type Runner struct {
-	processes map[string]Process
-	plan      *envstarlark.RuntimePlan
-	done      chan processExit
-	mu        sync.Mutex
-	opts      Options
-	cancel    context.CancelFunc
+	processes     map[string]Process
+	plan          *envstarlark.RuntimePlan
+	dependencyEnv map[string]string
+	done          chan processExit
+	mu            sync.Mutex
+	opts          Options
+	cancel        context.CancelFunc
 }
 
 func NewRunner(opts Options) *Runner {
@@ -114,13 +119,15 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 
 	startedDeps := false
 	if r.opts.DependencyRunner != nil && !r.opts.NoDeps && len(plan.Dependencies) > 0 {
-		if err := r.opts.DependencyRunner.Up(ctx, plan.Environment.Name, plan); err != nil {
+		startup, err := r.opts.DependencyRunner.Up(ctx, plan.Environment.Name, plan)
+		if err != nil {
 			r.emitDependencyFailure(plan, err)
 			if r.opts.Interactive {
 				return r.waitForQuitAfterError(ctx, plan, err, false)
 			}
 			return err
 		}
+		r.dependencyEnv = copyStringMap(startup.Env)
 		startedDeps = true
 		for _, dep := range plan.Dependencies {
 			r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
@@ -328,6 +335,7 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
+	target = withDependencyEnv(target, r.dependencyEnv)
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
@@ -347,6 +355,7 @@ func (r *Runner) runBeforeTarget(ctx context.Context, target envstarlark.TargetP
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
+	target = withDependencyEnv(target, r.dependencyEnv)
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
@@ -677,6 +686,32 @@ func sortedProcessRefs(processes map[string]Process) []string {
 	}
 	sort.Strings(refs)
 	return refs
+}
+
+func withDependencyEnv(target envstarlark.TargetProcess, env map[string]string) envstarlark.TargetProcess {
+	if len(env) == 0 {
+		return target
+	}
+	values := copyStringMap(target.Env)
+	if values == nil {
+		values = make(map[string]string)
+	}
+	for key, value := range env {
+		values[key] = value
+	}
+	target.Env = values
+	return target
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
 }
 
 func strconvQuote(value string) string {

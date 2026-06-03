@@ -105,7 +105,7 @@ func TestUpReturnsRuntimeFailureWithoutWaitingForUnrelatedProcess(t *testing.T) 
 func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{order: &order}
-	deps := &fakeDependencyRunner{order: &order}
+	deps := &fakeDependencyRunner{order: &order, env: map[string]string{"POSTGRES_PORT": "49152"}}
 	plan := testPlan()
 	plan.BeforeTargets = []envstarlark.TargetProcess{
 		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
@@ -128,6 +128,46 @@ func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 		"deps down",
 	}, order)
 	assert.Equal(t, []string{"api:migrate", "api:seed", "api:serve"}, processes.startedRefs())
+	require.Len(t, processes.started, 3)
+	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[2].Env["POSTGRES_PORT"])
+}
+
+func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	processes := &fakeProcessRunner{block: true}
+	actions := make(chan envruntime.ControlAction, 1)
+
+	plan := testPlan()
+	plan.Targets[0].Env["POSTGRES_PORT"] = "static"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"POSTGRES_PORT": "49152"},
+		},
+		ControlActions: actions,
+		NoReload:       true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: "api:serve"}
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+
+	require.Len(t, processes.started, 2)
+	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
 }
 
 func TestUpStopsDependenciesWhenBeforeTargetFailsNonInteractive(t *testing.T) {
@@ -418,14 +458,15 @@ type fakeDependencyRunner struct {
 	upCalls   int
 	downCalls int
 	order     *[]string
+	env       map[string]string
 }
 
-func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimePlan) error {
+func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
 	r.upCalls++
 	if r.order != nil {
 		*r.order = append(*r.order, "deps up")
 	}
-	return nil
+	return envruntime.DependencyStartup{Env: r.env}, nil
 }
 
 func (r *fakeDependencyRunner) Down(context.Context, string, *envstarlark.RuntimePlan) error {

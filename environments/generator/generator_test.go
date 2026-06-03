@@ -28,7 +28,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Ref: "a:serve", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 		},
 		Dependencies: []spec.Dependency{
-			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}},
+			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"MONGO_PORT=27017", "5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}},
 			{Ref: "redis", Name: "redis", Image: "redis:7"},
 		},
 		BeforeTargets: []spec.BeforeTarget{
@@ -56,7 +56,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.Less(t, strings.Index(string(first), `ref = "z:before"`), strings.Index(string(first), `ref = "a:before"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:before"`), strings.Index(string(first), `ref = "a:serve"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
-	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432"]`)
+	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432", "MONGO_PORT=27017"]`)
 	assert.Contains(t, string(first), `volumes = ["/a", "/z"]`)
 	assert.Contains(t, string(first), `order = ["a:before", "z:before", "postgres", "redis", "a:serve", "z:serve"]`)
 }

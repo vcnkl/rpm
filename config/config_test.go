@@ -626,6 +626,14 @@ func TestNewConfigValidationErrors(t *testing.T) {
 			message: "container path only",
 		},
 		{
+			name: "repo dependency port env name rejected",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\nenv:\n  deps:\n    - name: mongodb\n      image: mongo:8.0.23-noble\n      ports:\n        - MONGO-PORT=27017\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "invalid port env name",
+		},
+		{
 			name: "legacy top-level repo deps unsupported",
 			files: map[string]string{
 				"repo.yml":    "project:\n  name: test-project\ndeps:\n  - label: node\n    check_cmd: node --version\n    install_cmd: nvm install 20\n",
