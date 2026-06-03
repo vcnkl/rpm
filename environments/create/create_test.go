@@ -160,13 +160,14 @@ func newTestRepo(t *testing.T) *rootconfig.Config {
 project:
   name: test-project
 shell: /bin/sh
-dependencies:
-  - name: postgres
-    image: postgres:16
-  - name: mailhog
-    image: mailhog/mailhog:v1.0.1
-  - name: redis
-    image: redis:7
+env:
+  deps:
+    - name: postgres
+      image: postgres:16
+    - name: mailhog
+      image: mailhog/mailhog:v1.0.1
+    - name: redis
+      image: redis:7
 `), 0644))
 	writeBundle(t, repoRoot, "go-app", "postgres")
 	writeBundle(t, repoRoot, "ts-app", "mailhog")

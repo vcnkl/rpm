@@ -118,8 +118,8 @@ func (c *Config) Bundles() map[string]*models.Bundle {
 }
 
 func (c *Config) EnvironmentDependencies() map[string]models.EnvironmentDependency {
-	deps := make(map[string]models.EnvironmentDependency, len(c.repo.Dependencies))
-	for _, dep := range c.repo.Dependencies {
+	deps := make(map[string]models.EnvironmentDependency, len(c.repo.Env.Deps))
+	for _, dep := range c.repo.Env.Deps {
 		deps[dep.Name] = models.EnvironmentDependency{
 			Name:    dep.Name,
 			Image:   dep.Image,

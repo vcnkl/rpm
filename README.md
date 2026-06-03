@@ -25,23 +25,24 @@ wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
 project:
   name: 'my-project'          # Required; used for generated runtime resource names
 shell: '/usr/bin/env bash'    # Default shell for commands
-env:                          # Global environment variables
-  PROJECT: 'my-project'
-dependencies:                 # Docker runtime dependencies available to bundles
-  - name: postgres
-    image: postgres:16
-    env:
-      POSTGRES_PASSWORD: example
-    ports:
-      - "5432"
-    volumes:                  # Container data paths only; Docker volume names are generated
-      - /var/lib/postgresql/data
-  - name: redis
-    image: redis:7
+env:
+  vars:                       # Global environment variables
+    PROJECT: 'my-project'
+  deps:                       # Docker runtime dependencies available to bundles
+    - name: postgres
+      image: postgres:16
+      env:
+        POSTGRES_PASSWORD: example
+      ports:
+        - "5432"
+      volumes:                # Container data paths only; Docker volume names are generated
+        - /var/lib/postgresql/data
+    - name: redis
+      image: redis:7
 logger:
   datetime:
     format: '2006-01-02T15:04:05Z07:00' # Go time layout for rpm log timestamps
-deps:                         # External dependencies to check/install
+init:                         # External dependencies to check/install
   - label: node
     check_cmd: 'node --version'
     install_cmd: 'nvm install 20'
@@ -78,7 +79,7 @@ targets:
         - '*.log'
 ```
 
-Bundle environment dependency requirements are declared under `env.deps` as names that must exist in top-level `repo.yml` `dependencies`. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
+Bundle environment dependency requirements are declared under `env.deps` as names that must exist in top-level `repo.yml` `env.deps`. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
 
 ```yaml
 name: api

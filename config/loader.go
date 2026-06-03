@@ -34,6 +34,7 @@ func loadRepoConfig(path string) *RepoConfig {
 	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
 		panic(fmt.Sprintf("failed to read repo.yml at %s: %v", path, err))
 	}
+	validateRepoConfigSchema(k, path)
 
 	var repo RepoConfig
 	if err := k.Unmarshal("", &repo); err != nil {
@@ -109,7 +110,7 @@ func loadBundleConfig(path string, repoRoot string, repoDeps map[string]bool) *m
 		panic(fmt.Sprintf("failed to read rpm.yml at %s: %v", path, err))
 	}
 	if k.Exists("env.dependencies") {
-		panic(fmt.Sprintf("invalid rpm.yml at %s: env.dependencies is not supported; use env.deps with repo.yml dependencies", path))
+		panic(fmt.Sprintf("invalid rpm.yml at %s: env.dependencies is not supported; use env.deps with repo.yml env.deps", path))
 	}
 
 	var cfg BundleConfig
@@ -163,9 +164,27 @@ func loadBundleConfig(path string, repoRoot string, repoDeps map[string]bool) *m
 }
 
 func repoDependencyRefs(repo *RepoConfig) map[string]bool {
-	refs := make(map[string]bool, len(repo.Dependencies))
-	for _, dep := range repo.Dependencies {
+	refs := make(map[string]bool, len(repo.Env.Deps))
+	for _, dep := range repo.Env.Deps {
 		refs[dep.Name] = true
 	}
 	return refs
+}
+
+func validateRepoConfigSchema(k *koanf.Koanf, path string) {
+	if k.Exists("deps") {
+		panic(fmt.Sprintf("invalid repo.yml at %s: repo.yml deps is not supported; use init", path))
+	}
+	if k.Exists("dependencies") {
+		panic(fmt.Sprintf("invalid repo.yml at %s: repo.yml dependencies is not supported; use env.deps", path))
+	}
+	for _, key := range k.Keys() {
+		if !strings.HasPrefix(key, "env.") {
+			continue
+		}
+		parts := strings.Split(key, ".")
+		if len(parts) >= 2 && parts[1] != "vars" && parts[1] != "deps" {
+			panic(fmt.Sprintf("invalid repo.yml at %s: repo.yml env variables must be declared under env.vars", path))
+		}
+	}
 }

@@ -22,9 +22,13 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 			name:    "all defaults",
 			initial: RepoConfig{},
 			expected: RepoConfig{
-				Shell:        "/bin/sh",
-				Env:          map[string]string{},
-				Dependencies: []EnvironmentDependency{},
+				Shell: "/bin/sh",
+				Env: RepoEnvConfig{
+					Vars: map[string]string{},
+					Deps: []EnvironmentDependency{},
+				},
+				Init:   []InitStep{},
+				Ignore: []string{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -38,9 +42,13 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				Shell: "/bin/bash",
 			},
 			expected: RepoConfig{
-				Shell:        "/bin/bash",
-				Env:          map[string]string{},
-				Dependencies: []EnvironmentDependency{},
+				Shell: "/bin/bash",
+				Env: RepoEnvConfig{
+					Vars: map[string]string{},
+					Deps: []EnvironmentDependency{},
+				},
+				Init:   []InitStep{},
+				Ignore: []string{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -51,12 +59,25 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 		{
 			name: "preserves existing env",
 			initial: RepoConfig{
-				Env: map[string]string{"FOO": "bar"},
+				Env: RepoEnvConfig{
+					Vars: map[string]string{"FOO": "bar"},
+					Deps: []EnvironmentDependency{{Name: "postgres", Image: "postgres:16"}},
+				},
 			},
 			expected: RepoConfig{
-				Shell:        "/bin/sh",
-				Env:          map[string]string{"FOO": "bar"},
-				Dependencies: []EnvironmentDependency{},
+				Shell: "/bin/sh",
+				Env: RepoEnvConfig{
+					Vars: map[string]string{"FOO": "bar"},
+					Deps: []EnvironmentDependency{{
+						Name:    "postgres",
+						Image:   "postgres:16",
+						Env:     map[string]string{},
+						Ports:   []string{},
+						Volumes: []string{},
+					}},
+				},
+				Init:   []InitStep{},
+				Ignore: []string{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02T15:04:05Z07:00",
@@ -74,9 +95,13 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 				},
 			},
 			expected: RepoConfig{
-				Shell:        "/bin/sh",
-				Env:          map[string]string{},
-				Dependencies: []EnvironmentDependency{},
+				Shell: "/bin/sh",
+				Env: RepoEnvConfig{
+					Vars: map[string]string{},
+					Deps: []EnvironmentDependency{},
+				},
+				Init:   []InitStep{},
+				Ignore: []string{},
 				Logger: LoggerConfig{
 					DateTime: LoggerDateTimeConfig{
 						Format: "2006-01-02 15:04:05",
@@ -93,7 +118,8 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 
 			assert.Equal(t, tt.expected.Shell, cfg.Shell)
 			assert.Equal(t, tt.expected.Env, cfg.Env)
-			assert.Equal(t, tt.expected.Dependencies, cfg.Dependencies)
+			assert.Equal(t, tt.expected.Init, cfg.Init)
+			assert.Equal(t, tt.expected.Ignore, cfg.Ignore)
 			assert.Equal(t, tt.expected.Logger.DateTime.Format, cfg.Logger.DateTime.Format)
 		})
 	}
@@ -578,7 +604,7 @@ func TestNewConfigValidationErrors(t *testing.T) {
 		{
 			name: "duplicate repo dependency names",
 			files: map[string]string{
-				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n    image: postgres:16\n  - name: postgres\n    image: postgres:16\n",
+				"repo.yml":    "project:\n  name: test-project\nenv:\n  deps:\n    - name: postgres\n      image: postgres:16\n    - name: postgres\n      image: postgres:16\n",
 				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "duplicate dependency name",
@@ -586,7 +612,7 @@ func TestNewConfigValidationErrors(t *testing.T) {
 		{
 			name: "missing repo dependency image",
 			files: map[string]string{
-				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n",
+				"repo.yml":    "project:\n  name: test-project\nenv:\n  deps:\n    - name: postgres\n",
 				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "invalid dependency image",
@@ -594,10 +620,34 @@ func TestNewConfigValidationErrors(t *testing.T) {
 		{
 			name: "repo dependency volume bind rejected",
 			files: map[string]string{
-				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n    image: postgres:16\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n",
+				"repo.yml":    "project:\n  name: test-project\nenv:\n  deps:\n    - name: postgres\n      image: postgres:16\n      volumes:\n        - postgres-data:/var/lib/postgresql/data\n",
 				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
 			},
 			message: "container path only",
+		},
+		{
+			name: "legacy top-level repo deps unsupported",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\ndeps:\n  - label: node\n    check_cmd: node --version\n    install_cmd: nvm install 20\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "repo.yml deps is not supported; use init",
+		},
+		{
+			name: "legacy top-level repo dependencies unsupported",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\ndependencies:\n  - name: postgres\n    image: postgres:16\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "repo.yml dependencies is not supported; use env.deps",
+		},
+		{
+			name: "legacy direct repo env variables unsupported",
+			files: map[string]string{
+				"repo.yml":    "project:\n  name: test-project\nenv:\n  GLOBAL_VAR: value\n",
+				"api/rpm.yml": "name: api\ntargets:\n  - name: serve\n    cmd: echo serve\n",
+			},
+			message: "repo.yml env variables must be declared under env.vars",
 		},
 		{
 			name: "unknown env dependency ref",

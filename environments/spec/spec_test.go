@@ -47,7 +47,8 @@ func TestResolveTargetEnvAndDotenvCompatibility(t *testing.T) {
 project:
   name: test-project
 env:
-  FROM_REPO: repo
+  vars:
+    FROM_REPO: repo
 `), 0644))
 	bundleRoot := filepath.Join(repoRoot, "apps", "api")
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
@@ -104,7 +105,8 @@ project:
   name: test-project
 shell: /bin/sh
 env:
-  GLOBAL_VAR: global
+  vars:
+    GLOBAL_VAR: global
 `), 0644))
 	bundleRoot := filepath.Join(repoRoot, "apps", "api")
 	require.NoError(t, os.MkdirAll(filepath.Join(bundleRoot, "scripts"), 0755))

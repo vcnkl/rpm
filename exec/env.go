@@ -13,7 +13,7 @@ import (
 func ComposeEnv(repoRoot string, repo *config.RepoConfig, bundle *models.Bundle, target *models.Target) []string {
 	env := os.Environ()
 
-	for k, v := range repo.Env {
+	for k, v := range repo.Env.Vars {
 		env = append(env, k+"="+v)
 	}
 

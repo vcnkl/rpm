@@ -217,7 +217,9 @@ func TestComposeEnv(t *testing.T) {
 			name:     "basic env composition",
 			repoRoot: "/repo",
 			repo: &config.RepoConfig{
-				Env: map[string]string{"REPO_VAR": "repo_value"},
+				Env: config.RepoEnvConfig{
+					Vars: map[string]string{"REPO_VAR": "repo_value"},
+				},
 			},
 			bundle: &models.Bundle{
 				Name: "core",

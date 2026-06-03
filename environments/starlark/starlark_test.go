@@ -137,12 +137,13 @@ project:
   name: test-project
 shell: /bin/sh
 env:
-  GLOBAL_VAR: global
-dependencies:
-  - name: postgres
-    image: postgres:16
-    ports:
-      - "5432:5432"
+  vars:
+    GLOBAL_VAR: global
+  deps:
+    - name: postgres
+      image: postgres:16
+      ports:
+        - "5432:5432"
 `), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "api"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "api", "rpm.yml"), []byte(`

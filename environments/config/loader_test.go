@@ -280,9 +280,10 @@ func TestLoadBlueprintDependencyPolicy(t *testing.T) {
 project:
   name: test-project
 shell: /bin/sh
-dependencies:
-  - name: postgres
-    image: postgres:16
+env:
+  deps:
+    - name: postgres
+      image: postgres:16
 `), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
@@ -391,9 +392,10 @@ func TestBundleDependencyRefs(t *testing.T) {
 project:
   name: test-project
 shell: /bin/sh
-dependencies:
-  - name: postgres
-    image: postgres:16
+env:
+  deps:
+    - name: postgres
+      image: postgres:16
 `), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api

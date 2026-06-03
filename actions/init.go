@@ -39,7 +39,7 @@ func (a *InitAction) Execute(ctx context.Context) (*models.Result, error) {
 		a.log.Warn("failed to write dag.json", logger.Err(err))
 	}
 
-	for _, dep := range a.config.Repo().Deps {
+	for _, dep := range a.config.Repo().Init {
 		depLog := a.log.WithPrefix(dep.Label)
 
 		checkPassed := false

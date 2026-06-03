@@ -23,7 +23,7 @@ func validateRepoConfig(cfg *RepoConfig, path string) error {
 	}
 
 	deps := make(map[string]bool)
-	for _, dep := range cfg.Dependencies {
+	for _, dep := range cfg.Env.Deps {
 		if dep.Name == "" {
 			return errors.Wrap(ErrInvalidDependency, "repo dependency with missing name")
 		}

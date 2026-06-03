@@ -216,14 +216,14 @@ func ResolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 }
 
 func ResolveRepoEnv(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) []EnvVar {
-	env := appendEnvMap(nil, repo.Repo().Env)
+	env := appendEnvMap(nil, repo.Repo().Env.Vars)
 	env = append(env, "REPO_ROOT="+repo.RepoRoot())
 	env = appendEnvMap(env, blueprint.Variables)
 	return mergeEnvVars(env)
 }
 
 func ResolveBundleEnv(repo *rootconfig.Config, bundle *models.Bundle, blueprint *models.EnvironmentBlueprint) []EnvVar {
-	env := appendEnvMap(nil, repo.Repo().Env)
+	env := appendEnvMap(nil, repo.Repo().Env.Vars)
 	env = append(env, "REPO_ROOT="+repo.RepoRoot())
 	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
 	env = appendEnvMap(env, bundle.Env)
@@ -274,7 +274,7 @@ func ResolveWatchRoots(repoRoot string, bundle *models.Bundle, target *models.Ta
 }
 
 func appendExplicitTargetEnv(env []string, repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []string {
-	env = appendEnvMap(env, repo.Repo().Env)
+	env = appendEnvMap(env, repo.Repo().Env.Vars)
 	env = append(env, "REPO_ROOT="+repo.RepoRoot())
 	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
 	env = appendEnvMap(env, bundle.Env)
