@@ -346,7 +346,7 @@ function SelectionView({ request }: { request: SelectionRequest }) {
 				borderStyle="single"
 				borderColor="cyan"
 			>
-				{windowed.rows.map((item, index) => {
+				{windowed.rows.map((item) => {
 					const absolute = state.items.indexOf(item)
 					return (
 						<SelectionRow
