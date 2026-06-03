@@ -410,7 +410,7 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 		parts = []string{"/bin/sh"}
 	}
 	args := append([]string{}, parts[1:]...)
-	args = append(args, "-c", target.Command)
+	args = append(args, "-c", commandWithDependencyExports(target.Command, target.DependencyEnv))
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Dir = target.WorkingDir
 	cmd.Env = processEnv(target.Env)
@@ -542,6 +542,26 @@ func processEnv(values map[string]string) []string {
 		env = append(env, key+"="+values[key])
 	}
 	return env
+}
+
+func commandWithDependencyExports(command string, values map[string]string) string {
+	if len(values) == 0 {
+		return command
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	exports := make([]string, 0, len(keys))
+	for _, key := range keys {
+		exports = append(exports, key+"="+shellQuote(values[key]))
+	}
+	return "export " + strings.Join(exports, " ") + "; " + command
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func targetOrder(plan *envstarlark.RuntimePlan) []string {
@@ -700,6 +720,7 @@ func withDependencyEnv(target envstarlark.TargetProcess, env map[string]string) 
 		values[key] = value
 	}
 	target.Env = values
+	target.DependencyEnv = copyStringMap(env)
 	return target
 }
 

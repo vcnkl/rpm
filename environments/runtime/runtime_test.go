@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -132,6 +133,9 @@ func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[2].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[0].DependencyEnv["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[1].DependencyEnv["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[2].DependencyEnv["POSTGRES_PORT"])
 }
 
 func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T) {
@@ -168,6 +172,42 @@ func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T)
 	require.Len(t, processes.started, 2)
 	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[0].DependencyEnv["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[1].DependencyEnv["POSTGRES_PORT"])
+}
+
+func TestShellProcessRunnerExportsDependencyEnvAfterProcessEnv(t *testing.T) {
+	events := &eventRecorder{}
+	runner := envruntime.NewShellProcessRunner("/bin/sh", &bytes.Buffer{}, &bytes.Buffer{})
+
+	process, err := runner.Start(context.Background(), envstarlark.TargetProcess{
+		Ref:           "api:serve",
+		Command:       `printf '%s\n' "$POSTGRES_PORT"`,
+		WorkingDir:    t.TempDir(),
+		Env:           map[string]string{"POSTGRES_PORT": "dotenv"},
+		DependencyEnv: map[string]string{"POSTGRES_PORT": "49152"},
+	}, events)
+	require.NoError(t, err)
+	require.NoError(t, process.Wait())
+
+	assert.Equal(t, []string{"49152"}, events.outputLines("api:serve", "stdout"))
+}
+
+func TestShellProcessRunnerQuotesDependencyEnvExports(t *testing.T) {
+	events := &eventRecorder{}
+	runner := envruntime.NewShellProcessRunner("/bin/sh", &bytes.Buffer{}, &bytes.Buffer{})
+	value := `quoted ' value $POSTGRES_PORT`
+
+	process, err := runner.Start(context.Background(), envstarlark.TargetProcess{
+		Ref:           "api:serve",
+		Command:       `printf '%s\n' "$SPECIAL_PORT"`,
+		WorkingDir:    t.TempDir(),
+		DependencyEnv: map[string]string{"SPECIAL_PORT": value},
+	}, events)
+	require.NoError(t, err)
+	require.NoError(t, process.Wait())
+
+	assert.Equal(t, []string{value}, events.outputLines("api:serve", "stdout"))
 }
 
 func TestUpStopsDependenciesWhenBeforeTargetFailsNonInteractive(t *testing.T) {
@@ -523,4 +563,16 @@ func (r *eventRecorder) types() []string {
 		types = append(types, event.Type)
 	}
 	return types
+}
+
+func (r *eventRecorder) outputLines(ref string, stream string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lines := []string{}
+	for _, event := range r.events {
+		if event.Type == envruntime.EventProcessOutput && event.Ref == ref && event.Stream == stream {
+			lines = append(lines, event.Line)
+		}
+	}
+	return lines
 }
