@@ -154,6 +154,7 @@ func loadBundleConfig(path string, repoRoot string, repoDeps map[string]bool) *m
 				},
 				Reload: *tc.Config.Reload,
 				Ignore: tc.Config.Ignore,
+				Index:  tc.Config.Index,
 			},
 		}
 		bundle.Targets = append(bundle.Targets, target)

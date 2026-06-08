@@ -231,6 +231,23 @@ func TestTargetConfig_SetDefaults(t *testing.T) {
 				assert.False(t, *cfg.Config.Reload)
 			},
 		},
+		{
+			name: "index preserves",
+			initial: func() TargetConfig {
+				index := 0
+				return TargetConfig{
+					Name: "serve",
+					Config: TargetOptions{
+						Index: &index,
+					},
+				}
+			}(),
+			validate: func(t *testing.T, cfg TargetConfig) {
+				if assert.NotNil(t, cfg.Config.Index) {
+					assert.Equal(t, 0, *cfg.Config.Index)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -494,6 +511,8 @@ name: api
 targets:
   - name: serve
     cmd: echo serve
+    config:
+      index: 3
 `), 0644))
 
 	cfg := NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
@@ -501,6 +520,9 @@ targets:
 	assert.Equal(t, repoRoot, cfg.RepoRoot())
 	assert.Equal(t, "/bin/bash", cfg.Repo().Shell)
 	assert.NotNil(t, cfg.Bundles()["api"])
+	if assert.NotNil(t, cfg.Bundles()["api"].Targets[0].Config.Index) {
+		assert.Equal(t, 3, *cfg.Bundles()["api"].Targets[0].Config.Index)
+	}
 }
 
 func TestDiscoverBundlesSortedByRepoRelativePath(t *testing.T) {

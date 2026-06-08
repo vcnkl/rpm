@@ -19,6 +19,7 @@ type TargetOptions struct {
 	Dotenv     DotenvConfig `koanf:"dotenv"`
 	Reload     *bool        `koanf:"reload"`
 	Ignore     []string     `koanf:"ignore"`
+	Index      *int         `koanf:"index"`
 }
 
 type DotenvConfig struct {

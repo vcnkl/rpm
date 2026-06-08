@@ -47,6 +47,11 @@ type BeforeTarget struct {
 	Env        []EnvVar
 }
 
+type resolvedBeforeTarget struct {
+	target BeforeTarget
+	index  *int
+}
+
 type Dependency struct {
 	Ref     string
 	Name    string
@@ -114,6 +119,7 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		targetSeen[bpTarget.Ref] = true
 	}
 	beforeSeen := make(map[string]bool)
+	beforeTargets := make([]resolvedBeforeTarget, 0, len(blueprint.Before))
 	for _, ref := range blueprint.Before {
 		if beforeSeen[ref] {
 			return nil, errors.Errorf("duplicate before target ref %q", ref)
@@ -122,16 +128,19 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			return nil, errors.Errorf("before target %q is also listed in targets", ref)
 		}
 		beforeSeen[ref] = true
-		target, err := ResolveBeforeTarget(repo, blueprint, ref)
-		if err != nil {
-			return nil, err
-		}
 		targetConfig, err := repo.ResolveTarget(ref)
 		if err != nil {
 			return nil, errors.Wrapf(err, "unknown before target ref %q", ref)
 		}
+		target := resolveBeforeTarget(repo, blueprint, targetConfig)
 		addBundle(repo.Bundles()[targetConfig.BundleName])
-		resolved.BeforeTargets = append(resolved.BeforeTargets, target)
+		beforeTargets = append(beforeTargets, resolvedBeforeTarget{target: target, index: targetConfig.Config.Index})
+	}
+	sort.Slice(beforeTargets, func(i, j int) bool {
+		return compareBeforeTargets(beforeTargets[i], beforeTargets[j])
+	})
+	for _, before := range beforeTargets {
+		resolved.BeforeTargets = append(resolved.BeforeTargets, before.target)
 	}
 
 	for _, bpTarget := range blueprint.Targets {
@@ -181,18 +190,12 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	for _, before := range resolved.BeforeTargets {
 		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: before.Ref, Kind: "before"})
 	}
-	for _, target := range resolved.Targets {
-		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: target.Ref, Kind: "target"})
-	}
 	for _, dep := range resolved.Dependencies {
 		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: dep.Ref, Kind: "dependency"})
 	}
-	sort.Slice(resolved.RuntimeUnits, func(i, j int) bool {
-		if resolved.RuntimeUnits[i].Kind == resolved.RuntimeUnits[j].Kind {
-			return resolved.RuntimeUnits[i].Id < resolved.RuntimeUnits[j].Id
-		}
-		return resolved.RuntimeUnits[i].Kind < resolved.RuntimeUnits[j].Kind
-	})
+	for _, target := range resolved.Targets {
+		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: target.Ref, Kind: "target"})
+	}
 
 	return resolved, nil
 }
@@ -206,13 +209,33 @@ func ResolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 	if err != nil {
 		return BeforeTarget{}, errors.Wrapf(err, "unknown before target ref %q", ref)
 	}
+	return resolveBeforeTarget(repo, blueprint, target), nil
+}
+
+func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, target *models.Target) BeforeTarget {
 	bundle := repo.Bundles()[target.BundleName]
 	return BeforeTarget{
 		Ref:        target.ID(),
 		Command:    target.Cmd,
 		WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
 		Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
-	}, nil
+	}
+}
+
+func compareBeforeTargets(left, right resolvedBeforeTarget) bool {
+	if left.index != nil && right.index != nil {
+		if *left.index != *right.index {
+			return *left.index < *right.index
+		}
+		return left.target.Ref < right.target.Ref
+	}
+	if left.index != nil {
+		return true
+	}
+	if right.index != nil {
+		return false
+	}
+	return left.target.Ref < right.target.Ref
 }
 
 func ResolveRepoEnv(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) []EnvVar {

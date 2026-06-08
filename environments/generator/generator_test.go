@@ -58,7 +58,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
 	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432", "MONGO_PORT=27017"]`)
 	assert.Contains(t, string(first), `volumes = ["/a", "/z"]`)
-	assert.Contains(t, string(first), `order = ["a:before", "z:before", "postgres", "redis", "a:serve", "z:serve"]`)
+	assert.Contains(t, string(first), `order = ["z:before", "a:before", "postgres", "redis", "a:serve", "z:serve"]`)
 }
 
 func TestRenderGoldenLocalStack(t *testing.T) {

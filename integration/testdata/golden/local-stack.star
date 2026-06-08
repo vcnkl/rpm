@@ -32,12 +32,6 @@ rpm_dependency(
 )
 
 rpm_before_target(
-    ref = "go-app:prepare",
-    command = "echo \"BEFORE_TARGET=$BUNDLE_ROOT\"",
-    workdir = "<repo>/apps/go-app",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
-)
-rpm_before_target(
     ref = "go-app:before_file",
     command = ". \"$BUNDLE_ROOT/scripts/before.sh\"",
     workdir = "<repo>/apps/go-app",
@@ -47,6 +41,12 @@ rpm_before_target(
     ref = "go-app:before_inline",
     command = "echo \"BEFORE_INLINE=$REPO_ROOT\"",
     workdir = "<repo>",
+    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
+)
+rpm_before_target(
+    ref = "go-app:prepare",
+    command = "echo \"BEFORE_TARGET=$BUNDLE_ROOT\"",
+    workdir = "<repo>/apps/go-app",
     env = {"APP_PORT": "8080", "BUNDLE_ROOT": "<repo>/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "<repo>"},
 )
 

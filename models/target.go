@@ -17,6 +17,7 @@ type TargetConfig struct {
 	Dotenv     DotenvConfig
 	Reload     bool
 	Ignore     []string
+	Index      *int
 }
 
 type DotenvConfig struct {

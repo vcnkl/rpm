@@ -80,16 +80,15 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 		buf.WriteByte('\n')
 	}
 
-	order := make([]string, 0, len(env.RuntimeUnits))
-	units := append([]spec.RuntimeUnit{}, env.RuntimeUnits...)
-	sort.Slice(units, func(i, j int) bool {
-		if units[i].Kind == units[j].Kind {
-			return units[i].Id < units[j].Id
-		}
-		return units[i].Kind < units[j].Kind
-	})
-	for _, unit := range units {
-		order = append(order, unit.Id)
+	order := make([]string, 0, len(env.BeforeTargets)+len(dependencies)+len(targets))
+	for _, before := range env.BeforeTargets {
+		order = append(order, before.Ref)
+	}
+	for _, dep := range dependencies {
+		order = append(order, dep.Ref)
+	}
+	for _, target := range targets {
+		order = append(order, target.Ref)
 	}
 	writeCall(&buf, "rpm_run", []field{{name: "order", value: orderedStringList(order)}})
 
