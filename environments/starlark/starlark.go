@@ -43,12 +43,11 @@ type Dependency struct {
 }
 
 type TargetProcess struct {
-	Ref           string
-	Command       string
-	WorkingDir    string
-	Env           map[string]string
-	DependencyEnv map[string]string
-	Reload        bool
+	Ref        string
+	Command    string
+	WorkingDir string
+	Env        map[string]string
+	Reload     bool
 }
 
 type Watch struct {

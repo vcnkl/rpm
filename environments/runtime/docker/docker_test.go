@@ -226,7 +226,7 @@ func TestUpUsesCustomPortEnvName(t *testing.T) {
 			Ref:   "mongodb",
 			Name:  "mongodb",
 			Image: "mongo:8.0.23-noble",
-			Ports: []string{"MONGO_PORT=27017"},
+			Ports: []string{"MONGODB_PORT=27017"},
 		}},
 	}
 
@@ -239,7 +239,7 @@ func TestUpUsesCustomPortEnvName(t *testing.T) {
 		Network: "rpm-local-stack",
 		Ports:   []string{"49152:27017"},
 	}}, backend.containers)
-	assert.Equal(t, map[string]string{"MONGO_PORT": "49152"}, startup.Env)
+	assert.Equal(t, map[string]string{"MONGODB_PORT": "49152"}, startup.Env)
 }
 
 func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {

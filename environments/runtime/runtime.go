@@ -94,13 +94,12 @@ type Options struct {
 }
 
 type Runner struct {
-	processes     map[string]Process
-	plan          *envstarlark.RuntimePlan
-	dependencyEnv map[string]string
-	done          chan processExit
-	mu            sync.Mutex
-	opts          Options
-	cancel        context.CancelFunc
+	processes map[string]Process
+	plan      *envstarlark.RuntimePlan
+	done      chan processExit
+	mu        sync.Mutex
+	opts      Options
+	cancel    context.CancelFunc
 }
 
 func NewRunner(opts Options) *Runner {
@@ -113,7 +112,6 @@ func NewRunner(opts Options) *Runner {
 func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	ctx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
-	r.plan = plan
 	defer cancel()
 	r.declareUnits(plan)
 
@@ -127,12 +125,13 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			}
 			return err
 		}
-		r.dependencyEnv = copyStringMap(startup.Env)
+		plan = planWithDependencyEnv(plan, startup.Env)
 		startedDeps = true
 		for _, dep := range plan.Dependencies {
 			r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
 		}
 	}
+	r.plan = plan
 
 	for _, before := range plan.BeforeTargets {
 		if err := r.runBeforeTarget(ctx, before); err != nil {
@@ -335,7 +334,6 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
-	target = withDependencyEnv(target, r.dependencyEnv)
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
@@ -355,7 +353,6 @@ func (r *Runner) runBeforeTarget(ctx context.Context, target envstarlark.TargetP
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
-	target = withDependencyEnv(target, r.dependencyEnv)
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
@@ -410,7 +407,7 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 		parts = []string{"/bin/sh"}
 	}
 	args := append([]string{}, parts[1:]...)
-	args = append(args, "-c", commandWithDependencyExports(target.Command, target.DependencyEnv))
+	args = append(args, "-c", target.Command)
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Dir = target.WorkingDir
 	cmd.Env = processEnv(target.Env)
@@ -532,36 +529,27 @@ type discardSink struct{}
 func (discardSink) Emit(Event) {}
 
 func processEnv(values map[string]string) []string {
-	env := append([]string{}, os.Environ()...)
+	envMap := make(map[string]string)
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			envMap[key] = value
+		}
+	}
+	for key, value := range values {
+		envMap[key] = value
+	}
+
 	keys := make([]string, 0, len(values))
-	for key := range values {
+	for key := range envMap {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
 	for _, key := range keys {
-		env = append(env, key+"="+values[key])
+		env = append(env, key+"="+envMap[key])
 	}
 	return env
-}
-
-func commandWithDependencyExports(command string, values map[string]string) string {
-	if len(values) == 0 {
-		return command
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	exports := make([]string, 0, len(keys))
-	for _, key := range keys {
-		exports = append(exports, key+"="+shellQuote(values[key]))
-	}
-	return "export " + strings.Join(exports, " ") + "; " + command
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func targetOrder(plan *envstarlark.RuntimePlan) []string {
@@ -708,10 +696,23 @@ func sortedProcessRefs(processes map[string]Process) []string {
 	return refs
 }
 
-func withDependencyEnv(target envstarlark.TargetProcess, env map[string]string) envstarlark.TargetProcess {
+func planWithDependencyEnv(plan *envstarlark.RuntimePlan, env map[string]string) *envstarlark.RuntimePlan {
 	if len(env) == 0 {
-		return target
+		return plan
 	}
+	next := *plan
+	next.BeforeTargets = append([]envstarlark.TargetProcess{}, plan.BeforeTargets...)
+	for i := range next.BeforeTargets {
+		next.BeforeTargets[i] = targetWithDependencyEnv(next.BeforeTargets[i], env)
+	}
+	next.Targets = append([]envstarlark.TargetProcess{}, plan.Targets...)
+	for i := range next.Targets {
+		next.Targets[i] = targetWithDependencyEnv(next.Targets[i], env)
+	}
+	return &next
+}
+
+func targetWithDependencyEnv(target envstarlark.TargetProcess, env map[string]string) envstarlark.TargetProcess {
 	values := copyStringMap(target.Env)
 	if values == nil {
 		values = make(map[string]string)
@@ -720,7 +721,6 @@ func withDependencyEnv(target envstarlark.TargetProcess, env map[string]string) 
 		values[key] = value
 	}
 	target.Env = values
-	target.DependencyEnv = copyStringMap(env)
 	return target
 }
 

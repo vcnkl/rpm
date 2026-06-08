@@ -133,9 +133,6 @@ func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[2].Env["POSTGRES_PORT"])
-	assert.Equal(t, "49152", processes.started[0].DependencyEnv["POSTGRES_PORT"])
-	assert.Equal(t, "49152", processes.started[1].DependencyEnv["POSTGRES_PORT"])
-	assert.Equal(t, "49152", processes.started[2].DependencyEnv["POSTGRES_PORT"])
 }
 
 func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T) {
@@ -172,42 +169,122 @@ func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T)
 	require.Len(t, processes.started, 2)
 	assert.Equal(t, "49152", processes.started[0].Env["POSTGRES_PORT"])
 	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
-	assert.Equal(t, "49152", processes.started[0].DependencyEnv["POSTGRES_PORT"])
-	assert.Equal(t, "49152", processes.started[1].DependencyEnv["POSTGRES_PORT"])
 }
 
-func TestShellProcessRunnerExportsDependencyEnvAfterProcessEnv(t *testing.T) {
+func TestUpDependencyEnvOverridesDotenvValueInFinalEnvMap(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.Targets[0].Env["MONGODB_PORT"] = "27017"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 1)
+	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
+}
+
+func TestUpDependencyEnvOverridesBeforeTargetEnvInNormalizedPlan(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{{
+		Ref:        "api:migrate",
+		Command:    "echo migrate",
+		WorkingDir: "/repo/api",
+		Env:        map[string]string{"MONGODB_PORT": "27017"},
+	}}
+	plan.Targets[0].Env["MONGODB_PORT"] = "27017"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 2)
+	assert.Equal(t, "api:migrate", processes.started[0].Ref)
+	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
+	assert.Equal(t, "api:serve", processes.started[1].Ref)
+	assert.Equal(t, "49152", processes.started[1].Env["MONGODB_PORT"])
+}
+
+func TestUpShellBeforeTargetUsesDynamicDependencyEnv(t *testing.T) {
+	t.Setenv("MONGODB_PORT", "27017")
+	out := &bytes.Buffer{}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{{
+		Ref:        "api:migrate",
+		Command:    `printf '%s\n' "$MONGODB_PORT"`,
+		WorkingDir: t.TempDir(),
+		Env:        map[string]string{"MONGODB_PORT": "27017"},
+	}}
+	plan.Targets = []envstarlark.TargetProcess{}
+	plan.Watches = []envstarlark.Watch{}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: envruntime.NewShellProcessRunner("/bin/sh", out, &bytes.Buffer{}),
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		EventSink: events,
+		NoReload:  true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"49152"}, events.outputLines("api:migrate", "stdout"))
+}
+
+func TestNoDepsDoesNotOverrideStaticPortEnv(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{{
+		Ref:        "api:migrate",
+		Command:    "echo migrate",
+		WorkingDir: "/repo/api",
+		Env:        map[string]string{"MONGODB_PORT": "27017"},
+	}}
+	plan.Targets[0].Env["MONGODB_PORT"] = "27017"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: &fakeDependencyRunner{env: map[string]string{"MONGODB_PORT": "49152"}},
+		NoDeps:           true,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 2)
+	assert.Equal(t, "27017", processes.started[0].Env["MONGODB_PORT"])
+	assert.Equal(t, "27017", processes.started[1].Env["MONGODB_PORT"])
+}
+
+func TestShellProcessRunnerUsesFinalEnvMap(t *testing.T) {
 	events := &eventRecorder{}
 	runner := envruntime.NewShellProcessRunner("/bin/sh", &bytes.Buffer{}, &bytes.Buffer{})
 
 	process, err := runner.Start(context.Background(), envstarlark.TargetProcess{
-		Ref:           "api:serve",
-		Command:       `printf '%s\n' "$POSTGRES_PORT"`,
-		WorkingDir:    t.TempDir(),
-		Env:           map[string]string{"POSTGRES_PORT": "dotenv"},
-		DependencyEnv: map[string]string{"POSTGRES_PORT": "49152"},
+		Ref:        "api:serve",
+		Command:    `printf '%s\n' "$MONGODB_PORT"`,
+		WorkingDir: t.TempDir(),
+		Env:        map[string]string{"MONGODB_PORT": "49152"},
 	}, events)
 	require.NoError(t, err)
 	require.NoError(t, process.Wait())
 
 	assert.Equal(t, []string{"49152"}, events.outputLines("api:serve", "stdout"))
-}
-
-func TestShellProcessRunnerQuotesDependencyEnvExports(t *testing.T) {
-	events := &eventRecorder{}
-	runner := envruntime.NewShellProcessRunner("/bin/sh", &bytes.Buffer{}, &bytes.Buffer{})
-	value := `quoted ' value $POSTGRES_PORT`
-
-	process, err := runner.Start(context.Background(), envstarlark.TargetProcess{
-		Ref:           "api:serve",
-		Command:       `printf '%s\n' "$SPECIAL_PORT"`,
-		WorkingDir:    t.TempDir(),
-		DependencyEnv: map[string]string{"SPECIAL_PORT": value},
-	}, events)
-	require.NoError(t, err)
-	require.NoError(t, process.Wait())
-
-	assert.Equal(t, []string{value}, events.outputLines("api:serve", "stdout"))
 }
 
 func TestUpStopsDependenciesWhenBeforeTargetFailsNonInteractive(t *testing.T) {
