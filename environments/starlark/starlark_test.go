@@ -69,11 +69,13 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 	assert.Equal(t, "local", plan.Environment.Name)
 	assert.Equal(t, "postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"api:migrate"}, []string{plan.BeforeTargets[0].Ref})
+	assert.Equal(t, "api/rpm.yml", plan.BeforeTargets[0].ConfigPath)
+	assert.Empty(t, plan.BeforeTargets[0].Command)
 	assert.Equal(t, "api:serve", plan.Targets[0].Ref)
+	assert.Equal(t, "api/rpm.yml", plan.Targets[0].ConfigPath)
 	assert.Equal(t, "8080", plan.Targets[0].Env["APP_PORT"])
-	assert.Equal(t, filepath.Join(repo.RepoRoot(), "api"), plan.Targets[0].WorkingDir)
-	assert.Equal(t, []string{filepath.Join(repo.RepoRoot(), "api", "*.go")}, plan.Watches[0].Roots)
-	assert.Equal(t, []string{"tmp/**"}, plan.Watches[0].Ignore)
+	assert.Empty(t, plan.Targets[0].WorkingDir)
+	assert.Empty(t, plan.Watches)
 }
 
 func TestInterpretRejectsUnsupportedValuesWithBacktrace(t *testing.T) {

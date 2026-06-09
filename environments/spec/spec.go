@@ -31,10 +31,12 @@ type Bundle struct {
 
 type Target struct {
 	Ref         string
+	ConfigPath  string
 	Command     string
 	WorkingDir  string
 	Env         []EnvVar
 	ExplicitEnv []EnvVar
+	OverrideEnv []EnvVar
 	Reload      bool
 	Watch       Watch
 	Dotenv      Dotenv
@@ -42,6 +44,7 @@ type Target struct {
 
 type BeforeTarget struct {
 	Ref        string
+	ConfigPath string
 	Command    string
 	WorkingDir string
 	Env        []EnvVar
@@ -54,6 +57,7 @@ type resolvedBeforeTarget struct {
 
 type Dependency struct {
 	Ref          string
+	ConfigPath   string
 	Name         string
 	Image        string
 	Env          []EnvVar
@@ -161,10 +165,12 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		}
 		resolved.Targets = append(resolved.Targets, Target{
 			Ref:         target.ID(),
+			ConfigPath:  bundleConfigPath(bundle),
 			Command:     target.Cmd,
 			WorkingDir:  ResolveWorkingDir(repo.RepoRoot(), target),
 			Env:         ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
 			ExplicitEnv: ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget),
+			OverrideEnv: envVars(bpTarget.Env),
 			Reload:      reload,
 			Watch: Watch{
 				Roots:   ResolveWatchRoots(repo.RepoRoot(), bundle, target),
@@ -217,6 +223,7 @@ func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 	bundle := repo.Bundles()[target.BundleName]
 	return BeforeTarget{
 		Ref:        target.ID(),
+		ConfigPath: bundleConfigPath(bundle),
 		Command:    target.Cmd,
 		WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
 		Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
@@ -334,6 +341,7 @@ func dependency(dep models.EnvironmentDependency) Dependency {
 	sort.Strings(volumes)
 	return Dependency{
 		Ref:          dep.Name,
+		ConfigPath:   "repo.yml",
 		Name:         dep.Name,
 		Image:        dep.Image,
 		Env:          envVars(dep.Env),
@@ -341,6 +349,10 @@ func dependency(dep models.EnvironmentDependency) Dependency {
 		Volumes:      volumes,
 		ReadinessCmd: dep.ReadinessCmd,
 	}
+}
+
+func bundleConfigPath(bundle *models.Bundle) string {
+	return filepath.ToSlash(filepath.Join(bundle.Path, "rpm.yml"))
 }
 
 func dependencyIncluded(policy models.DependencyPolicy, ref string) bool {

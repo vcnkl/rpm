@@ -8,92 +8,47 @@ rpm_environment(
 
 rpm_dependency(
     ref = "mailhog",
-    name = "mailhog",
-    image = "mailhog/mailhog:v1.0.1",
-    env = {},
-    ports = ["1025"],
-    volumes = [],
-    readiness_cmd = "",
+    config = "repo.yml",
 )
 rpm_dependency(
     ref = "postgres",
-    name = "postgres",
-    image = "postgres:16",
-    env = {"POSTGRES_PASSWORD": "example"},
-    ports = ["5432"],
-    volumes = ["/var/lib/postgresql/data"],
-    readiness_cmd = "true",
+    config = "repo.yml",
 )
 rpm_dependency(
     ref = "redis",
-    name = "redis",
-    image = "redis:7",
-    env = {},
-    ports = ["6379:6379"],
-    volumes = [],
-    readiness_cmd = "",
+    config = "repo.yml",
 )
 
 rpm_before_target(
     ref = "go-app:before_file",
-    command = ". \"$BUNDLE_ROOT/scripts/before.sh\"",
-    workdir = "${REPO_ROOT}/apps/go-app",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "${REPO_ROOT}/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "${REPO_ROOT}"},
+    config = "apps/go-app/rpm.yml",
 )
 rpm_before_target(
     ref = "go-app:before_inline",
-    command = "echo \"BEFORE_INLINE=$REPO_ROOT\"",
-    workdir = "${REPO_ROOT}",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "${REPO_ROOT}/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "${REPO_ROOT}"},
+    config = "apps/go-app/rpm.yml",
 )
 rpm_before_target(
     ref = "go-app:prepare",
-    command = "echo \"BEFORE_TARGET=$BUNDLE_ROOT\"",
-    workdir = "${REPO_ROOT}/apps/go-app",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "${REPO_ROOT}/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "${REPO_ROOT}"},
+    config = "apps/go-app/rpm.yml",
 )
 
 rpm_target(
     ref = "go-app:echo-123",
-    command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR\"",
-    workdir = "${REPO_ROOT}/apps/go-app",
-    env = {"APP_PORT": "8080", "BUNDLE_ROOT": "${REPO_ROOT}/apps/go-app", "DB_HOST": "localhost", "DB_PORT": "5432", "GLOBAL_VAR": "global_value", "GO_VAR": "go_value", "LOCAL_SECRET": "secret_from_dotenv", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "${REPO_ROOT}"},
+    config = "apps/go-app/rpm.yml",
+    env = {"APP_PORT": "8080"},
     reload = True,
-)
-rpm_watch(
-    target = "go-app:echo-123",
-    roots = ["${REPO_ROOT}/apps/go-app"],
-    ignore = ["bin/**"],
-    reload = True,
-    enabled = True,
 )
 rpm_target(
     ref = "python-app:echo-456",
-    command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT PYTHON_VAR=$PYTHON_VAR\"",
-    workdir = "${REPO_ROOT}/apps/python-app",
-    env = {"BUNDLE_ROOT": "${REPO_ROOT}/apps/python-app", "GLOBAL_VAR": "global_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "PYTHON_VAR": "python_value", "REPO_ROOT": "${REPO_ROOT}"},
+    config = "apps/python-app/rpm.yml",
+    env = {},
     reload = False,
-)
-rpm_watch(
-    target = "python-app:echo-456",
-    roots = ["${REPO_ROOT}/apps/python-app"],
-    ignore = [],
-    reload = False,
-    enabled = False,
 )
 rpm_target(
     ref = "ts-app:web",
-    command = "echo \"REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT TS_VAR=$TS_VAR\"",
-    workdir = "${REPO_ROOT}/apps/ts-app",
-    env = {"BUNDLE_ROOT": "${REPO_ROOT}/apps/ts-app", "GLOBAL_VAR": "global_value", "LOG_LEVEL": "debug", "PROJECT_NAME": "sample-repo", "REPO_ROOT": "${REPO_ROOT}", "TS_VAR": "typescript_value"},
+    config = "apps/ts-app/rpm.yml",
+    env = {},
     reload = True,
-)
-rpm_watch(
-    target = "ts-app:web",
-    roots = ["${REPO_ROOT}/apps/ts-app"],
-    ignore = [],
-    reload = True,
-    enabled = True,
 )
 
 rpm_run(

@@ -11,7 +11,9 @@ import (
 	"github.com/vcnkl/rpm/environments/generator"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	runtimedocker "github.com/vcnkl/rpm/environments/runtime/docker"
+	envspec "github.com/vcnkl/rpm/environments/spec"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	"github.com/vcnkl/rpm/models"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
 
 	"github.com/pkg/errors"
@@ -160,7 +162,8 @@ func (a *EnvAction) loadPlan(ctx context.Context, name string) (*envstarlark.Run
 	if err != nil {
 		return nil, err
 	}
-	return expandRepoRoot(plan, a.config.RepoRoot()), nil
+	plan = expandRepoRoot(plan, a.config.RepoRoot())
+	return a.resolvePlanReferences(plan)
 }
 
 func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark.RuntimePlan {
@@ -168,6 +171,7 @@ func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark
 	next.Environment.Variables = expandMap(next.Environment.Variables, repoRoot)
 	next.Dependencies = append([]envstarlark.Dependency{}, plan.Dependencies...)
 	for i := range next.Dependencies {
+		next.Dependencies[i].ConfigPath = expandString(next.Dependencies[i].ConfigPath, repoRoot)
 		next.Dependencies[i].Env = expandMap(next.Dependencies[i].Env, repoRoot)
 		next.Dependencies[i].Ports = expandList(next.Dependencies[i].Ports, repoRoot)
 		next.Dependencies[i].Volumes = expandList(next.Dependencies[i].Volumes, repoRoot)
@@ -190,9 +194,160 @@ func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark
 }
 
 func expandTargetProcess(target envstarlark.TargetProcess, repoRoot string) envstarlark.TargetProcess {
+	target.ConfigPath = expandString(target.ConfigPath, repoRoot)
 	target.WorkingDir = expandString(target.WorkingDir, repoRoot)
 	target.Env = expandMap(target.Env, repoRoot)
 	return target
+}
+
+func (a *EnvAction) resolvePlanReferences(plan *envstarlark.RuntimePlan) (*envstarlark.RuntimePlan, error) {
+	if !planUsesConfigReferences(plan) {
+		return plan, nil
+	}
+	blueprint := &models.EnvironmentBlueprint{
+		Version:   1,
+		Name:      plan.Environment.Name,
+		Variables: plan.Environment.Variables,
+		Before:    beforeRefs(plan.BeforeTargets),
+		Targets:   planTargets(plan.Targets),
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: len(plan.Dependencies) > 0,
+			Include: dependencyRefs(plan.Dependencies),
+			Exclude: []string{},
+		},
+		ReloadPolicy: models.ReloadPolicy{
+			Enabled:  plan.Environment.LiveReload.Enabled,
+			Debounce: plan.Environment.LiveReload.Debounce,
+		},
+	}
+	resolved, err := envspec.Resolve(a.config, blueprint)
+	if err != nil {
+		return nil, err
+	}
+	return resolvedPlan(resolved, plan.RunOrder), nil
+}
+
+func planUsesConfigReferences(plan *envstarlark.RuntimePlan) bool {
+	for _, dep := range plan.Dependencies {
+		if dep.ConfigPath != "" || dep.Image == "" {
+			return true
+		}
+	}
+	for _, target := range plan.BeforeTargets {
+		if target.ConfigPath != "" || target.Command == "" {
+			return true
+		}
+	}
+	for _, target := range plan.Targets {
+		if target.ConfigPath != "" || target.Command == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func beforeRefs(targets []envstarlark.TargetProcess) []string {
+	refs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		refs = append(refs, target.Ref)
+	}
+	return refs
+}
+
+func dependencyRefs(dependencies []envstarlark.Dependency) []string {
+	refs := make([]string, 0, len(dependencies))
+	for _, dep := range dependencies {
+		refs = append(refs, dep.Ref)
+	}
+	return refs
+}
+
+func planTargets(targets []envstarlark.TargetProcess) []models.EnvironmentTarget {
+	result := make([]models.EnvironmentTarget, 0, len(targets))
+	for _, target := range targets {
+		reload := target.Reload
+		result = append(result, models.EnvironmentTarget{
+			Ref:    target.Ref,
+			Reload: &reload,
+			Env:    target.Env,
+		})
+	}
+	return result
+}
+
+func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarlark.RuntimePlan {
+	plan := &envstarlark.RuntimePlan{
+		Environment: envstarlark.Environment{
+			Name:      env.Name,
+			Variables: envVarMap(env.Variables),
+			LiveReload: envstarlark.ReloadPolicy{
+				Enabled:  env.ReloadPolicy.Enabled,
+				Debounce: env.ReloadPolicy.Debounce,
+			},
+		},
+		RunOrder: append([]string{}, runOrder...),
+	}
+	for _, dep := range env.Dependencies {
+		plan.Dependencies = append(plan.Dependencies, envstarlark.Dependency{
+			Ref:          dep.Ref,
+			ConfigPath:   dep.ConfigPath,
+			Name:         dep.Name,
+			Image:        dep.Image,
+			Env:          envVarMap(dep.Env),
+			Ports:        append([]string{}, dep.Ports...),
+			Volumes:      append([]string{}, dep.Volumes...),
+			ReadinessCmd: dep.ReadinessCmd,
+		})
+	}
+	for _, target := range env.BeforeTargets {
+		plan.BeforeTargets = append(plan.BeforeTargets, envstarlark.TargetProcess{
+			Ref:        target.Ref,
+			ConfigPath: target.ConfigPath,
+			Command:    target.Command,
+			WorkingDir: target.WorkingDir,
+			Env:        envVarMap(target.Env),
+		})
+	}
+	for _, target := range env.Targets {
+		plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
+			Ref:        target.Ref,
+			ConfigPath: target.ConfigPath,
+			Command:    target.Command,
+			WorkingDir: target.WorkingDir,
+			Env:        envVarMap(target.ExplicitEnv),
+			Reload:     target.Reload,
+		})
+		plan.Watches = append(plan.Watches, envstarlark.Watch{
+			Target:  target.Ref,
+			Roots:   append([]string{}, target.Watch.Roots...),
+			Ignore:  append([]string{}, target.Watch.Ignore...),
+			Reload:  target.Watch.Reload,
+			Enabled: target.Watch.Enabled,
+		})
+	}
+	if len(plan.RunOrder) == 0 {
+		for _, before := range plan.BeforeTargets {
+			plan.RunOrder = append(plan.RunOrder, before.Ref)
+		}
+		for _, dep := range plan.Dependencies {
+			plan.RunOrder = append(plan.RunOrder, dep.Ref)
+		}
+		for _, target := range plan.Targets {
+			plan.RunOrder = append(plan.RunOrder, target.Ref)
+		}
+	}
+	return plan
+}
+
+func envVarMap(values []envspec.EnvVar) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(values))
+	for _, value := range values {
+		result[value.Name] = value.Value
+	}
+	return result
 }
 
 func expandMap(values map[string]string, repoRoot string) map[string]string {

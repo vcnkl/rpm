@@ -2,7 +2,6 @@ package subcmds_test
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/vcnkl/rpm/cmd/subcmds"
 	rootconfig "github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
 func TestEnvHelpListsSubcommands(t *testing.T) {
@@ -49,7 +47,6 @@ func TestEnvUpHelpListsFlags(t *testing.T) {
 	assert.Contains(t, output, "--non-interactive")
 	assert.Contains(t, output, "--no-reload")
 	assert.Contains(t, output, "--no-deps")
-	assert.Contains(t, output, "--render-only")
 }
 
 func TestEnvCreateNonInteractiveCommand(t *testing.T) {
@@ -143,34 +140,6 @@ func TestEnvRenderRejectsOutWithoutValueAfterBlueprint(t *testing.T) {
 	assert.Contains(t, err.Error(), "--out requires a value")
 }
 
-func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
-	repo := newCommandTestRepo(t)
-	app := cmd.NewApp()
-	out := new(bytes.Buffer)
-	app.Writer = out
-	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target-reload", "go-app:echo-123=true"}))
-	configPath := filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "config.yml")
-	before, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	out.Reset()
-
-	err = app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--render-only", "--no-reload"})
-
-	require.NoError(t, err)
-	after, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	assert.Equal(t, string(before), string(after))
-
-	rendered := strings.TrimSpace(out.String())
-	data, err := os.ReadFile(rendered)
-	require.NoError(t, err)
-	plan, err := envstarlark.InterpretSource(context.Background(), "local-stack", rendered, data)
-	require.NoError(t, err)
-	assert.False(t, plan.Environment.LiveReload.Enabled)
-	assert.False(t, plan.Targets[0].Reload)
-	assert.False(t, plan.Watches[0].Enabled)
-}
-
 func TestEnvUpReadsGeneratedStarlarkOnly(t *testing.T) {
 	repo := newCommandTestRepo(t)
 	app := cmd.NewApp()
@@ -189,6 +158,23 @@ func TestEnvUpReadsGeneratedStarlarkOnly(t *testing.T) {
 	output := out.String()
 	assert.Contains(t, output, `"ref":"go-app:echo-123"`)
 	assert.NotContains(t, output, `"ref":"ts-app:web"`)
+}
+
+func TestEnvUpResolvesCurrentTargetConfigFromGeneratedRefs(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	app.Writer = out
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123"}))
+	out.Reset()
+	require.NoError(t, os.WriteFile(filepath.Join(repo.RepoRoot(), "apps", "go-app", ".env.override"), []byte("UPDATED_VALUE=from-dotenv\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo.RepoRoot(), "apps", "go-app", "rpm.yml"), []byte("name: go-app\ntargets:\n  - name: echo-123\n    cmd: echo updated-command $UPDATED_VALUE\n    config:\n      dotenv:\n        files:\n          - .env.override\n"), 0644))
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--non-interactive", "--no-deps", "--no-reload"})
+
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "updated-command")
+	assert.Contains(t, out.String(), "from-dotenv")
 }
 
 func TestEnvUpFailsWhenGeneratedStarlarkMissing(t *testing.T) {

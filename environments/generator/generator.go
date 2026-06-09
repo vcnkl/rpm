@@ -36,12 +36,7 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 	for _, dep := range dependencies {
 		writeCall(&buf, "rpm_dependency", []field{
 			{name: "ref", value: quote(dep.Ref)},
-			{name: "name", value: quote(dep.Name)},
-			{name: "image", value: quote(dep.Image)},
-			{name: "env", value: envDict(dep.Env)},
-			{name: "ports", value: stringList(dep.Ports)},
-			{name: "volumes", value: stringList(dep.Volumes)},
-			{name: "readiness_cmd", value: quote(dep.ReadinessCmd)},
+			{name: "config", value: quote(dep.ConfigPath)},
 		})
 	}
 	if len(dependencies) > 0 {
@@ -51,9 +46,7 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 	for _, before := range env.BeforeTargets {
 		writeCall(&buf, "rpm_before_target", []field{
 			{name: "ref", value: quote(before.Ref)},
-			{name: "command", value: quote(before.Command)},
-			{name: "workdir", value: quote(before.WorkingDir)},
-			{name: "env", value: envDict(before.Env)},
+			{name: "config", value: quote(before.ConfigPath)},
 		})
 	}
 	if len(env.BeforeTargets) > 0 {
@@ -67,17 +60,9 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 	for _, target := range targets {
 		writeCall(&buf, "rpm_target", []field{
 			{name: "ref", value: quote(target.Ref)},
-			{name: "command", value: quote(target.Command)},
-			{name: "workdir", value: quote(target.WorkingDir)},
-			{name: "env", value: envDict(target.ExplicitEnv)},
+			{name: "config", value: quote(target.ConfigPath)},
+			{name: "env", value: envDict(target.OverrideEnv)},
 			{name: "reload", value: boolValue(target.Reload)},
-		})
-		writeCall(&buf, "rpm_watch", []field{
-			{name: "target", value: quote(target.Ref)},
-			{name: "roots", value: stringList(target.Watch.Roots)},
-			{name: "ignore", value: stringList(target.Watch.Ignore)},
-			{name: "reload", value: boolValue(target.Watch.Reload)},
-			{name: "enabled", value: boolValue(target.Watch.Enabled)},
 		})
 	}
 	if len(targets) > 0 {

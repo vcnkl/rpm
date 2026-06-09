@@ -24,16 +24,16 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Name: "A", Value: "first"},
 		},
 		Targets: []spec.Target{
-			{Ref: "z:serve", Command: "echo z", WorkingDir: "/repo/z", ExplicitEnv: []spec.EnvVar{{Name: "Z", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/z"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
-			{Ref: "a:serve", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
+			{Ref: "z:serve", ConfigPath: "z/rpm.yml", Command: "echo z", WorkingDir: "/repo/z", ExplicitEnv: []spec.EnvVar{{Name: "Z", Value: "1"}}, OverrideEnv: []spec.EnvVar{{Name: "Z", Value: "override"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/z"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
+			{Ref: "a:serve", ConfigPath: "a/rpm.yml", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 		},
 		Dependencies: []spec.Dependency{
-			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"MONGO_PORT=27017", "5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}, ReadinessCmd: "pg_isready"},
-			{Ref: "redis", Name: "redis", Image: "redis:7"},
+			{Ref: "postgres", ConfigPath: "repo.yml", Name: "postgres", Image: "postgres:16", Ports: []string{"MONGO_PORT=27017", "5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}, ReadinessCmd: "pg_isready"},
+			{Ref: "redis", ConfigPath: "repo.yml", Name: "redis", Image: "redis:7"},
 		},
 		BeforeTargets: []spec.BeforeTarget{
-			{Ref: "z:before", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
-			{Ref: "a:before", Command: "echo a", WorkingDir: "/repo/a", Env: []spec.EnvVar{{Name: "A", Value: "1"}}},
+			{Ref: "z:before", ConfigPath: "z/rpm.yml", Command: "echo z", WorkingDir: "/repo/z", Env: []spec.EnvVar{{Name: "Z", Value: "1"}}},
+			{Ref: "a:before", ConfigPath: "a/rpm.yml", Command: "echo a", WorkingDir: "/repo/a", Env: []spec.EnvVar{{Name: "A", Value: "1"}}},
 		},
 		RuntimeUnits: []spec.RuntimeUnit{
 			{Id: "z:serve", Kind: "target"},
@@ -56,9 +56,12 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.Less(t, strings.Index(string(first), `ref = "z:before"`), strings.Index(string(first), `ref = "a:before"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:before"`), strings.Index(string(first), `ref = "a:serve"`))
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
-	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432", "MONGO_PORT=27017"]`)
-	assert.Contains(t, string(first), `volumes = ["/a", "/z"]`)
-	assert.Contains(t, string(first), `readiness_cmd = "pg_isready"`)
+	assert.Contains(t, string(first), `config = "repo.yml"`)
+	assert.Contains(t, string(first), `config = "a/rpm.yml"`)
+	assert.Contains(t, string(first), `env = {"Z": "override"}`)
+	assert.NotContains(t, string(first), `echo z`)
+	assert.NotContains(t, string(first), `ports =`)
+	assert.NotContains(t, string(first), `readiness_cmd =`)
 	assert.Contains(t, string(first), `order = ["z:before", "a:before", "postgres", "redis", "a:serve", "z:serve"]`)
 }
 
@@ -83,7 +86,9 @@ func TestRenderDoesNotLeakHostEnv(t *testing.T) {
 
 	assert.NotContains(t, string(data), "RPM_SHOULD_NOT_LEAK")
 	assert.NotContains(t, string(data), "host_only_value")
-	assert.Contains(t, string(data), "LOCAL_SECRET")
+	assert.NotContains(t, string(data), "LOCAL_SECRET")
+	assert.NotContains(t, string(data), "secret_from_dotenv")
+	assert.Contains(t, string(data), "apps/go-app/rpm.yml")
 }
 
 func TestWriteUsesCachePath(t *testing.T) {
@@ -105,7 +110,7 @@ func TestWriteUsesCachePath(t *testing.T) {
 	assert.FileExists(t, expected)
 	data, err := os.ReadFile(expected)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), generator.RepoRootToken)
+	assert.Contains(t, string(data), `config = "api/rpm.yml"`)
 	assert.NotContains(t, string(data), repo.RepoRoot())
 }
 

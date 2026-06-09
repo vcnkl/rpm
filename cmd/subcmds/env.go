@@ -258,7 +258,7 @@ func envRenderCmd() *cli.Command {
 func envUpCmd() *cli.Command {
 	return &cli.Command{
 		Name:                   "up",
-		Usage:                  "Validate, render, and run an environment blueprint",
+		Usage:                  "Run an environment blueprint from generated Starlark",
 		ArgsUsage:              "<blueprint>",
 		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
@@ -274,10 +274,6 @@ func envUpCmd() *cli.Command {
 				Name:  "no-deps",
 				Usage: "Do not start environment dependencies",
 			},
-			&cli.BoolFlag{
-				Name:  "render-only",
-				Usage: "Render Starlark and exit without running",
-			},
 		},
 		Action: func(ctx *cli.Context) error {
 			name, _, trailingBools, err := parseTrailingFlags(ctx.Args().Slice())
@@ -289,17 +285,6 @@ func envUpCmd() *cli.Command {
 			}
 			noReload := ctx.Bool("no-reload") || trailingBools["no-reload"]
 			noDeps := ctx.Bool("no-deps") || trailingBools["no-deps"]
-			if ctx.Bool("render-only") || trailingBools["render-only"] {
-				path, err := renderEnvironment(ctx, name, "", renderOptions{
-					NoReload: noReload,
-					NoDeps:   noDeps,
-				})
-				if err != nil {
-					return cli.Exit("error: "+err.Error(), 1)
-				}
-				fmt.Fprintln(ctx.App.Writer, path)
-				return nil
-			}
 			cfg := loadConfig(ctx)
 			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
 			if err := action.Up(ctx.Context, actions.EnvUpOptions{

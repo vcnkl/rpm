@@ -35,6 +35,7 @@ type ReloadPolicy struct {
 
 type Dependency struct {
 	Ref          string
+	ConfigPath   string
 	Name         string
 	Image        string
 	Env          map[string]string
@@ -45,6 +46,7 @@ type Dependency struct {
 
 type TargetProcess struct {
 	Ref        string
+	ConfigPath string
 	Command    string
 	WorkingDir string
 	Env        map[string]string
@@ -145,56 +147,58 @@ func rpmEnvironment(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gost
 }
 
 func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
-	var ref, name, image, readinessCmd string
+	var ref, configPath, name, image, readinessCmd string
 	var envValue, portsValue, volumesValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
 		"ref", &ref,
-		"name", &name,
-		"image", &image,
-		"env", &envValue,
-		"ports", &portsValue,
-		"volumes", &volumesValue,
+		"config?", &configPath,
+		"name?", &name,
+		"image?", &image,
+		"env?", &envValue,
+		"ports?", &portsValue,
+		"volumes?", &volumesValue,
 		"readiness_cmd?", &readinessCmd,
 	); err != nil {
 		return nil, err
 	}
-	env, err := stringDict(envValue)
+	env, err := optionalStringDict(envValue)
 	if err != nil {
 		return nil, err
 	}
-	ports, err := stringList(portsValue)
+	ports, err := optionalStringList(portsValue)
 	if err != nil {
 		return nil, err
 	}
-	volumes, err := stringList(volumesValue)
+	volumes, err := optionalStringList(volumesValue)
 	if err != nil {
 		return nil, err
 	}
 	builder(thread).dependencies = append(builder(thread).dependencies, Dependency{
-		Ref: ref, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes, ReadinessCmd: readinessCmd,
+		Ref: ref, ConfigPath: configPath, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes, ReadinessCmd: readinessCmd,
 	})
 	return gostarlark.None, nil
 }
 
 func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
-	var ref, command, workdir string
+	var ref, configPath, command, workdir string
 	var reload bool
 	var envValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
 		"ref", &ref,
-		"command", &command,
-		"workdir", &workdir,
-		"env", &envValue,
+		"config?", &configPath,
+		"command?", &command,
+		"workdir?", &workdir,
+		"env?", &envValue,
 		"reload", &reload,
 	); err != nil {
 		return nil, err
 	}
-	env, err := stringDict(envValue)
+	env, err := optionalStringDict(envValue)
 	if err != nil {
 		return nil, err
 	}
 	builder(thread).targets = append(builder(thread).targets, TargetProcess{
-		Ref: ref, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
+		Ref: ref, ConfigPath: configPath, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
 	})
 	return gostarlark.None, nil
 }
@@ -236,22 +240,23 @@ func rpmWatch(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark
 }
 
 func targetProcess(fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple, reload bool) (TargetProcess, error) {
-	var ref, command, workdir string
+	var ref, configPath, command, workdir string
 	var envValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
 		"ref", &ref,
-		"command", &command,
-		"workdir", &workdir,
-		"env", &envValue,
+		"config?", &configPath,
+		"command?", &command,
+		"workdir?", &workdir,
+		"env?", &envValue,
 	); err != nil {
 		return TargetProcess{}, err
 	}
-	env, err := stringDict(envValue)
+	env, err := optionalStringDict(envValue)
 	if err != nil {
 		return TargetProcess{}, err
 	}
 	return TargetProcess{
-		Ref: ref, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
+		Ref: ref, ConfigPath: configPath, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
 	}, nil
 }
 
@@ -307,6 +312,13 @@ func stringDict(value gostarlark.Value) (map[string]string, error) {
 	return result, nil
 }
 
+func optionalStringDict(value gostarlark.Value) (map[string]string, error) {
+	if value == nil {
+		return map[string]string{}, nil
+	}
+	return stringDict(value)
+}
+
 func stringValueDict(value gostarlark.Value) (map[string]gostarlark.Value, error) {
 	dictValue, ok := value.(*gostarlark.Dict)
 	if !ok {
@@ -349,6 +361,13 @@ func stringList(value gostarlark.Value) ([]string, error) {
 		result = append(result, converted)
 	}
 	return result, nil
+}
+
+func optionalStringList(value gostarlark.Value) ([]string, error) {
+	if value == nil {
+		return []string{}, nil
+	}
+	return stringList(value)
 }
 
 func stringFromValue(value gostarlark.Value) (string, error) {
