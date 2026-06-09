@@ -1,6 +1,7 @@
 package create_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	rootconfig "github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	envcreate "github.com/vcnkl/rpm/environments/create"
+	"github.com/vcnkl/rpm/environments/generator"
+	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
 func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
@@ -30,6 +33,8 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
 	assert.Equal(t, []string{"mailhog", "postgres"}, blueprint.DependencyPolicy.Include)
+	plan := readGeneratedPlan(t, repo, "local-stack")
+	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{plan.Targets[0].Ref, plan.Targets[1].Ref})
 }
 
 func TestRunCreateNonInteractiveRequiresNameAndTargets(t *testing.T) {
@@ -62,6 +67,8 @@ func TestRunCreateAndEditNonInteractiveBeforeTargets(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"python-app:echo-456"}, blueprint.Before)
+	plan := readGeneratedPlan(t, repo, "local-stack")
+	assert.Equal(t, []string{"python-app:echo-456"}, []string{plan.BeforeTargets[0].Ref})
 }
 
 func TestRunCreateNonInteractiveRejectsUnknownTargetReloadRef(t *testing.T) {
@@ -116,6 +123,7 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 	assert.Nil(t, blueprint.Targets[0].Reload)
 	assert.Nil(t, blueprint.Targets[1].Reload)
 	assert.False(t, blueprint.DependencyPolicy.Enabled)
+	assert.FileExists(t, generator.CachePath(repo, "local-stack"))
 }
 
 func TestRunCreateInteractiveCanGloballyDisableLiveReload(t *testing.T) {
@@ -151,6 +159,8 @@ func TestRunEditInteractiveRewritesBlueprint(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:app_dev", "python-app:app_dev"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	plan := readGeneratedPlan(t, repo, "local-stack")
+	assert.Equal(t, []string{"go-app:app_dev", "python-app:app_dev"}, []string{plan.Targets[0].Ref, plan.Targets[1].Ref})
 }
 
 func newTestRepo(t *testing.T) *rootconfig.Config {
@@ -196,4 +206,14 @@ targets:
   - name: web
     cmd: echo web
 `), 0644))
+}
+
+func readGeneratedPlan(t *testing.T, repo *rootconfig.Config, name string) *envstarlark.RuntimePlan {
+	t.Helper()
+	path := generator.CachePath(repo, name)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	plan, err := envstarlark.InterpretSource(context.Background(), name, path, data)
+	require.NoError(t, err)
+	return plan
 }

@@ -28,7 +28,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Ref: "a:serve", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 		},
 		Dependencies: []spec.Dependency{
-			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"MONGO_PORT=27017", "5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}},
+			{Ref: "postgres", Name: "postgres", Image: "postgres:16", Ports: []string{"MONGO_PORT=27017", "5433:5432", "5432:5432"}, Volumes: []string{"/z", "/a"}, ReadinessCmd: "pg_isready"},
 			{Ref: "redis", Name: "redis", Image: "redis:7"},
 		},
 		BeforeTargets: []spec.BeforeTarget{
@@ -58,6 +58,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.Less(t, strings.Index(string(first), `ref = "a:serve"`), strings.Index(string(first), `ref = "z:serve"`))
 	assert.Contains(t, string(first), `ports = ["5432:5432", "5433:5432", "MONGO_PORT=27017"]`)
 	assert.Contains(t, string(first), `volumes = ["/a", "/z"]`)
+	assert.Contains(t, string(first), `readiness_cmd = "pg_isready"`)
 	assert.Contains(t, string(first), `order = ["z:before", "a:before", "postgres", "redis", "a:serve", "z:serve"]`)
 }
 
@@ -99,9 +100,13 @@ func TestWriteUsesCachePath(t *testing.T) {
 	path, err := generator.Write(repo, resolved, "")
 	require.NoError(t, err)
 
-	expected := filepath.Join(repo.RepoRoot(), ".rpm", "cache", "starlark", "local", "env.star")
+	expected := filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local", "runtime.gen.star")
 	assert.Equal(t, expected, path)
 	assert.FileExists(t, expected)
+	data, err := os.ReadFile(expected)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), generator.RepoRootToken)
+	assert.NotContains(t, string(data), repo.RepoRoot())
 }
 
 func resolveLocalStack(t *testing.T, repoRoot string) (*rootconfig.Config, *spec.ResolvedEnvironment) {

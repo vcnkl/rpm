@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/pkg/errors"
 	rootconfig "github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/environments/spec"
 )
+
+const RepoRootToken = "${REPO_ROOT}"
 
 func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 	var buf bytes.Buffer
@@ -38,6 +41,7 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 			{name: "env", value: envDict(dep.Env)},
 			{name: "ports", value: stringList(dep.Ports)},
 			{name: "volumes", value: stringList(dep.Volumes)},
+			{name: "readiness_cmd", value: quote(dep.ReadinessCmd)},
 		})
 	}
 	if len(dependencies) > 0 {
@@ -103,6 +107,7 @@ func Write(repo *rootconfig.Config, env *spec.ResolvedEnvironment, out string) (
 	if err != nil {
 		return "", err
 	}
+	data = portableData(repo, data)
 	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
 		return "", errors.Wrap(err, "failed to create Starlark output directory")
 	}
@@ -113,7 +118,15 @@ func Write(repo *rootconfig.Config, env *spec.ResolvedEnvironment, out string) (
 }
 
 func CachePath(repo *rootconfig.Config, blueprint string) string {
-	return filepath.Join(repo.RepoRoot(), ".rpm", "cache", "starlark", blueprint, "env.star")
+	return filepath.Join(repo.RepoRoot(), ".rpm", "envs", blueprint, "runtime.gen.star")
+}
+
+func portableData(repo *rootconfig.Config, data []byte) []byte {
+	root := filepath.ToSlash(repo.RepoRoot())
+	if root == "" {
+		return data
+	}
+	return []byte(strings.ReplaceAll(string(data), root, RepoRootToken))
 }
 
 type field struct {

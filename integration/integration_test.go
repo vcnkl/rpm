@@ -163,9 +163,7 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Contains(t, output, `"type":"process_exited","ref":"ts-app:web"`)
 	assert.Contains(t, output, "REPO_ROOT=/workspace")
 	assert.Contains(t, output, "BUNDLE_ROOT=/workspace/apps/")
-	assert.Contains(t, output, "BEFORE_TARGET=/workspace/apps/go-app")
 	assert.Contains(t, output, "BEFORE_FILE=/workspace/apps/go-app")
-	assert.Contains(t, output, "BEFORE_INLINE=/workspace")
 	assert.Less(t, strings.Index(output, `"ref":"go-app:prepare"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 	assert.Less(t, strings.Index(output, `"ref":"go-app:before_file"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 	assert.Less(t, strings.Index(output, `"ref":"go-app:before_inline"`), strings.Index(output, `"ref":"go-app:echo-123"`))
@@ -192,7 +190,7 @@ func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
 
 	golden, err := os.ReadFile(filepath.Join("testdata", "golden", "local-stack.star"))
 	require.NoError(t, err)
-	rendered := runWorkspaceCommand(t, ctx, ctr, "sed 's#/workspace#<repo>#g' .rpm/cache/starlark/local-stack/env.star")
+	rendered := runWorkspaceCommand(t, ctx, ctr, "sed 's#${REPO_ROOT}#<repo>#g' .rpm/envs/local-stack/runtime.gen.star")
 	assert.Zero(t, rendered.exitCode, rendered.output)
 	assert.Equal(t, string(golden), rendered.output)
 

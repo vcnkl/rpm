@@ -121,11 +121,12 @@ func (c *Config) EnvironmentDependencies() map[string]models.EnvironmentDependen
 	deps := make(map[string]models.EnvironmentDependency, len(c.repo.Env.Deps))
 	for _, dep := range c.repo.Env.Deps {
 		deps[dep.Name] = models.EnvironmentDependency{
-			Name:    dep.Name,
-			Image:   dep.Image,
-			Env:     dep.Env,
-			Ports:   dep.Ports,
-			Volumes: dep.Volumes,
+			Name:         dep.Name,
+			Image:        dep.Image,
+			Env:          dep.Env,
+			Ports:        dep.Ports,
+			Volumes:      dep.Volumes,
+			ReadinessCmd: dep.ReadinessCmd,
 		}
 	}
 	return deps

@@ -242,6 +242,63 @@ func TestUpUsesCustomPortEnvName(t *testing.T) {
 	assert.Equal(t, map[string]string{"MONGODB_PORT": "49152"}, startup.Env)
 }
 
+func TestUpRunsDependencyReadinessWithContainerNameAndResolvedPorts(t *testing.T) {
+	backend := &recordingBackend{}
+	readiness := &recordingReadinessRunner{}
+	runner := docker.NewCLI(docker.Options{
+		Backend:         backend,
+		ReadinessRunner: readiness,
+		Shell:           "/bin/bash",
+		PortAllocator: &fixedPortAllocator{
+			port: 49152,
+		},
+	})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "postgres",
+			Name:         "postgres",
+			Image:        "postgres:16",
+			Ports:        []string{"POSTGRES_PORT=5432"},
+			ReadinessCmd: `docker exec ${DOCKER_CONTAINER_NAME} pg_isready`,
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "local-stack", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"POSTGRES_PORT": "49152"}, startup.Env)
+	require.Len(t, readiness.calls, 1)
+	assert.Equal(t, "/bin/bash", readiness.calls[0].shell)
+	assert.Equal(t, `docker exec ${DOCKER_CONTAINER_NAME} pg_isready`, readiness.calls[0].command)
+	assert.Equal(t, "rpm-local-stack-postgres", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
+	assert.Equal(t, "49152", readiness.calls[0].env["POSTGRES_PORT"])
+	assert.Equal(t, []string{
+		"network rpm-local-stack",
+		"run rpm-local-stack-postgres",
+	}, backend.calls)
+}
+
+func TestUpReturnsDependencyReadinessFailure(t *testing.T) {
+	backend := &recordingBackend{}
+	readiness := &recordingReadinessRunner{err: assert.AnError}
+	runner := docker.NewCLI(docker.Options{Backend: backend, ReadinessRunner: readiness})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "postgres",
+			Name:         "postgres",
+			Image:        "postgres:16",
+			ReadinessCmd: "false",
+		}},
+	}
+
+	_, err := runner.Up(context.Background(), "local-stack", plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Contains(t, err.Error(), "postgres readiness check failed")
+	require.Len(t, readiness.calls, 1)
+	assert.Equal(t, "rpm-local-stack-postgres", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
+}
+
 func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {
 	backend := &recordingBackend{}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
@@ -351,6 +408,26 @@ type recordingBackend struct {
 	containers        []docker.ContainerSpec
 	missingContainers map[string]bool
 	missingNetworks   map[string]bool
+}
+
+type readinessCall struct {
+	shell   string
+	command string
+	env     map[string]string
+}
+
+type recordingReadinessRunner struct {
+	calls []readinessCall
+	err   error
+}
+
+func (r *recordingReadinessRunner) Run(_ context.Context, shell string, command string, env map[string]string) error {
+	values := make(map[string]string, len(env))
+	for key, value := range env {
+		values[key] = value
+	}
+	r.calls = append(r.calls, readinessCall{shell: shell, command: command, env: values})
+	return r.err
 }
 
 func (b *recordingBackend) EnsureNetwork(_ context.Context, name string) error {

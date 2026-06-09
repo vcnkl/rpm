@@ -17,11 +17,12 @@ type EnvironmentTarget struct {
 }
 
 type EnvironmentDependency struct {
-	Name    string
-	Image   string
-	Env     map[string]string
-	Ports   []string
-	Volumes []string
+	Name         string
+	Image        string
+	Env          map[string]string
+	Ports        []string
+	Volumes      []string
+	ReadinessCmd string
 }
 
 type DependencyPolicy struct {

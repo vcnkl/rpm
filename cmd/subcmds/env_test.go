@@ -62,6 +62,7 @@ func TestEnvCreateNonInteractiveCommand(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.FileExists(t, filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "runtime.gen.star"))
 }
 
 func TestEnvEditNonInteractiveCommand(t *testing.T) {
@@ -110,7 +111,7 @@ func TestEnvRenderWritesCachePathAndPrintsPath(t *testing.T) {
 	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "render", "local-stack"})
 
 	require.NoError(t, err)
-	expected := filepath.Join(repo.RepoRoot(), ".rpm", "cache", "starlark", "local-stack", "env.star")
+	expected := filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "runtime.gen.star")
 	assert.Equal(t, expected, strings.TrimSpace(out.String()))
 	assert.FileExists(t, expected)
 }
@@ -148,14 +149,15 @@ func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
 	out := new(bytes.Buffer)
 	app.Writer = out
 	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123", "--target-reload", "go-app:echo-123=true"}))
-	before, err := os.ReadFile(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack.yml"))
+	configPath := filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "config.yml")
+	before, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	out.Reset()
 
 	err = app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--render-only", "--no-reload"})
 
 	require.NoError(t, err)
-	after, err := os.ReadFile(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack.yml"))
+	after, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))
 
@@ -167,6 +169,40 @@ func TestEnvUpRenderOnlyNoReloadDoesNotMutateBlueprint(t *testing.T) {
 	assert.False(t, plan.Environment.LiveReload.Enabled)
 	assert.False(t, plan.Targets[0].Reload)
 	assert.False(t, plan.Watches[0].Enabled)
+}
+
+func TestEnvUpReadsGeneratedStarlarkOnly(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	app.Writer = out
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123"}))
+	configPath := filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "config.yml")
+	config, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, append(config, []byte("    - ref: ts-app:web\n")...), 0644))
+	out.Reset()
+
+	err = app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--non-interactive", "--no-deps", "--no-reload"})
+
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, `"ref":"go-app:echo-123"`)
+	assert.NotContains(t, output, `"ref":"ts-app:web"`)
+}
+
+func TestEnvUpFailsWhenGeneratedStarlarkMissing(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	defer captureCliExit(t)()
+	require.NoError(t, app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "--non-interactive", "local-stack", "--target", "go-app:echo-123"}))
+	require.NoError(t, os.Remove(filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local-stack", "runtime.gen.star")))
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "up", "local-stack", "--non-interactive", "--no-deps", "--no-reload"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generated Starlark not found")
+	assert.Contains(t, err.Error(), "rpm env render local-stack")
 }
 
 func newCommandTestRepo(t *testing.T) *rootconfig.Config {

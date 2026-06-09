@@ -53,12 +53,13 @@ type resolvedBeforeTarget struct {
 }
 
 type Dependency struct {
-	Ref     string
-	Name    string
-	Image   string
-	Env     []EnvVar
-	Ports   []string
-	Volumes []string
+	Ref          string
+	Name         string
+	Image        string
+	Env          []EnvVar
+	Ports        []string
+	Volumes      []string
+	ReadinessCmd string
 }
 
 type EnvVar struct {
@@ -332,12 +333,13 @@ func dependency(dep models.EnvironmentDependency) Dependency {
 	sort.Strings(ports)
 	sort.Strings(volumes)
 	return Dependency{
-		Ref:     dep.Name,
-		Name:    dep.Name,
-		Image:   dep.Image,
-		Env:     envVars(dep.Env),
-		Ports:   ports,
-		Volumes: volumes,
+		Ref:          dep.Name,
+		Name:         dep.Name,
+		Image:        dep.Image,
+		Env:          envVars(dep.Env),
+		Ports:        ports,
+		Volumes:      volumes,
+		ReadinessCmd: dep.ReadinessCmd,
 	}
 }
 

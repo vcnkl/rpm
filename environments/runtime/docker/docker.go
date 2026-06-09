@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -32,10 +35,16 @@ type PortAllocator interface {
 	Allocate(ctx context.Context) (int, error)
 }
 
+type ReadinessRunner interface {
+	Run(ctx context.Context, shell string, command string, env map[string]string) error
+}
+
 type Options struct {
-	Backend       Backend
-	PortAllocator PortAllocator
-	VolumeNamer   VolumeNamer
+	Backend         Backend
+	PortAllocator   PortAllocator
+	VolumeNamer     VolumeNamer
+	ReadinessRunner ReadinessRunner
+	Shell           string
 }
 
 type ContainerSpec struct {
@@ -48,9 +57,11 @@ type ContainerSpec struct {
 }
 
 type CLI struct {
-	backend       Backend
-	portAllocator PortAllocator
-	volumeNamer   VolumeNamer
+	backend         Backend
+	portAllocator   PortAllocator
+	volumeNamer     VolumeNamer
+	readinessRunner ReadinessRunner
+	shell           string
 }
 
 func NewCLI(opts Options) *CLI {
@@ -66,7 +77,15 @@ func NewCLI(opts Options) *CLI {
 	if volumeNamer == nil {
 		volumeNamer = NewMemoryVolumeNamer("rpm")
 	}
-	return &CLI{backend: backend, portAllocator: portAllocator, volumeNamer: volumeNamer}
+	readinessRunner := opts.ReadinessRunner
+	if readinessRunner == nil {
+		readinessRunner = shellReadinessRunner{}
+	}
+	shell := opts.Shell
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	return &CLI{backend: backend, portAllocator: portAllocator, volumeNamer: volumeNamer, readinessRunner: readinessRunner, shell: shell}
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
@@ -93,12 +112,67 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			if err = c.backend.RunContainer(ctx, spec); err != nil {
 				return envruntime.DependencyStartup{}, err
 			}
+			if err = c.runReadiness(ctx, name, dep, env); err != nil {
+				return envruntime.DependencyStartup{}, err
+			}
 			for key, value := range env {
 				startup.Env[key] = value
 			}
 		}
 	}
 	return startup, nil
+}
+
+func (c *CLI) runReadiness(ctx context.Context, container string, dep envstarlark.Dependency, env map[string]string) error {
+	if strings.TrimSpace(dep.ReadinessCmd) == "" {
+		return nil
+	}
+	values := make(map[string]string, len(env)+1)
+	for key, value := range env {
+		values[key] = value
+	}
+	values["DOCKER_CONTAINER_NAME"] = container
+	if err := c.readinessRunner.Run(ctx, c.shell, dep.ReadinessCmd, values); err != nil {
+		return errors.Wrapf(err, "%s readiness check failed", dep.Name)
+	}
+	return nil
+}
+
+type shellReadinessRunner struct{}
+
+func (shellReadinessRunner) Run(ctx context.Context, shell string, command string, env map[string]string) error {
+	parts := strings.Fields(shell)
+	if len(parts) == 0 {
+		parts = []string{"/bin/sh"}
+	}
+	args := append([]string{}, parts[1:]...)
+	args = append(args, "-c", command)
+	cmd := exec.CommandContext(ctx, parts[0], args...)
+	cmd.Env = readinessEnv(env)
+	return cmd.Run()
+}
+
+func readinessEnv(values map[string]string) []string {
+	envMap := make(map[string]string)
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			envMap[key] = value
+		}
+	}
+	for key, value := range values {
+		envMap[key] = value
+	}
+	keys := make([]string, 0, len(envMap))
+	for key := range envMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+envMap[key])
+	}
+	return env
 }
 
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {

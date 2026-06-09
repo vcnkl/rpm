@@ -117,10 +117,18 @@ func MarshalBlueprint(blueprint *models.EnvironmentBlueprint) ([]byte, error) {
 }
 
 func BlueprintPath(repo *rootconfig.Config, name string) (string, error) {
+	dir, err := BlueprintDir(repo, name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yml"), nil
+}
+
+func BlueprintDir(repo *rootconfig.Config, name string) (string, error) {
 	if !ValidBlueprintName(name) {
 		return "", errors.Wrapf(ErrInvalidBlueprintName, "%q", name)
 	}
-	return filepath.Join(repo.RepoRoot(), ".rpm", "envs", name+".yml"), nil
+	return filepath.Join(repo.RepoRoot(), ".rpm", "envs", name), nil
 }
 
 func ValidBlueprintName(name string) bool {

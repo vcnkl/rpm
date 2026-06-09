@@ -315,6 +315,26 @@ func TestUpStopsDependenciesWhenBeforeTargetFailsNonInteractive(t *testing.T) {
 	assert.Contains(t, events.types(), envruntime.EventEnvironmentStopped)
 }
 
+func TestUpDependencyStartupFailurePreventsBeforeTargets(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	deps := &fakeDependencyRunner{upErr: assert.AnError}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{
+		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, 1, deps.upCalls)
+	assert.Empty(t, processes.startedRefs())
+}
+
 func TestNoDepsStillRunsBeforeTargetsBeforeTargets(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{order: &order}
@@ -576,12 +596,16 @@ type fakeDependencyRunner struct {
 	downCalls int
 	order     *[]string
 	env       map[string]string
+	upErr     error
 }
 
 func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
 	r.upCalls++
 	if r.order != nil {
 		*r.order = append(*r.order, "deps up")
+	}
+	if r.upErr != nil {
+		return envruntime.DependencyStartup{}, r.upErr
 	}
 	return envruntime.DependencyStartup{Env: r.env}, nil
 }

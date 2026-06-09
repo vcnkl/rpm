@@ -27,11 +27,12 @@ type InitStep struct {
 }
 
 type EnvironmentDependency struct {
-	Name    string            `koanf:"name"`
-	Image   string            `koanf:"image"`
-	Env     map[string]string `koanf:"env"`
-	Ports   []string          `koanf:"ports"`
-	Volumes []string          `koanf:"volumes"`
+	Name         string            `koanf:"name"`
+	Image        string            `koanf:"image"`
+	Env          map[string]string `koanf:"env"`
+	Ports        []string          `koanf:"ports"`
+	Volumes      []string          `koanf:"volumes"`
+	ReadinessCmd string            `koanf:"readiness-cmd"`
 }
 
 type LoggerConfig struct {

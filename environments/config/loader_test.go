@@ -52,7 +52,7 @@ func TestLoadBlueprintUnknownFile(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, envconfig.ErrUnknownBlueprint))
-	assert.Contains(t, err.Error(), ".rpm/envs/missing.yml")
+	assert.Contains(t, err.Error(), ".rpm/envs/missing/config.yml")
 }
 
 func TestBlueprintPathUsesRpmEnvs(t *testing.T) {
@@ -60,7 +60,7 @@ func TestBlueprintPathUsesRpmEnvs(t *testing.T) {
 
 	path, err := envconfig.BlueprintPath(repo, "local")
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local.yml"), path)
+	assert.Equal(t, filepath.Join(repo.RepoRoot(), ".rpm", "envs", "local", "config.yml"), path)
 }
 
 func TestBlueprintPathRejectsTraversal(t *testing.T) {
@@ -284,6 +284,7 @@ env:
   deps:
     - name: postgres
       image: postgres:16
+      readiness-cmd: pg_isready
 `), 0644))
 	writeBundleContent(t, repoRoot, "api", `
 name: api
@@ -312,6 +313,7 @@ dependencies:
 	assert.True(t, blueprint.DependencyPolicy.Enabled)
 	assert.Equal(t, []string{"postgres"}, blueprint.DependencyPolicy.Include)
 	assert.Empty(t, blueprint.DependencyPolicy.Exclude)
+	assert.Equal(t, "pg_isready", repo.EnvironmentDependencies()["postgres"].ReadinessCmd)
 }
 
 func TestLoadBlueprintUnknownDependencyRef(t *testing.T) {
@@ -465,7 +467,7 @@ func writeBundleContent(t *testing.T, repoRoot string, dir string, content strin
 
 func writeBlueprint(t *testing.T, repoRoot string, name string, content string) {
 	t.Helper()
-	blueprintRoot := filepath.Join(repoRoot, ".rpm", "envs")
+	blueprintRoot := filepath.Join(repoRoot, ".rpm", "envs", name)
 	require.NoError(t, os.MkdirAll(blueprintRoot, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(blueprintRoot, name+".yml"), []byte(content), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(blueprintRoot, "config.yml"), []byte(content), 0644))
 }

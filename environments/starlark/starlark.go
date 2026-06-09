@@ -34,12 +34,13 @@ type ReloadPolicy struct {
 }
 
 type Dependency struct {
-	Ref     string
-	Name    string
-	Image   string
-	Env     map[string]string
-	Ports   []string
-	Volumes []string
+	Ref          string
+	Name         string
+	Image        string
+	Env          map[string]string
+	Ports        []string
+	Volumes      []string
+	ReadinessCmd string
 }
 
 type TargetProcess struct {
@@ -144,7 +145,7 @@ func rpmEnvironment(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gost
 }
 
 func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
-	var ref, name, image string
+	var ref, name, image, readinessCmd string
 	var envValue, portsValue, volumesValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
 		"ref", &ref,
@@ -153,6 +154,7 @@ func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gosta
 		"env", &envValue,
 		"ports", &portsValue,
 		"volumes", &volumesValue,
+		"readiness_cmd?", &readinessCmd,
 	); err != nil {
 		return nil, err
 	}
@@ -169,7 +171,7 @@ func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gosta
 		return nil, err
 	}
 	builder(thread).dependencies = append(builder(thread).dependencies, Dependency{
-		Ref: ref, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes,
+		Ref: ref, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes, ReadinessCmd: readinessCmd,
 	})
 	return gostarlark.None, nil
 }

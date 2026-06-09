@@ -19,7 +19,7 @@ import (
 func TestInterpretGeneratedPlan(t *testing.T) {
 	src := []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {"LOG_LEVEL": "debug"})
-rpm_dependency(ref = "postgres", name = "postgres", image = "postgres:16", env = {"POSTGRES_PASSWORD": "example"}, ports = ["5432:5432"], volumes = ["/data"])
+rpm_dependency(ref = "postgres", name = "postgres", image = "postgres:16", env = {"POSTGRES_PASSWORD": "example"}, ports = ["5432:5432"], volumes = ["/data"], readiness_cmd = "pg_isready")
 rpm_before_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {"A": "b"})
 rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {"A": "b"}, reload = True)
 rpm_watch(target = "api:serve", roots = ["/repo/api"], ignore = ["bin/**"], reload = True, enabled = True)
@@ -33,6 +33,7 @@ rpm_run(order = ["postgres", "api:serve"])
 	assert.Equal(t, "debug", plan.Environment.Variables["LOG_LEVEL"])
 	assert.Equal(t, "postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"5432:5432"}, plan.Dependencies[0].Ports)
+	assert.Equal(t, "pg_isready", plan.Dependencies[0].ReadinessCmd)
 	assert.Equal(t, "api:migrate", plan.BeforeTargets[0].Ref)
 	assert.Equal(t, "go run migrations", plan.BeforeTargets[0].Command)
 	assert.Equal(t, "/repo/api", plan.BeforeTargets[0].WorkingDir)

@@ -5,15 +5,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/environments/generator"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	runtimedocker "github.com/vcnkl/rpm/environments/runtime/docker"
-	envspec "github.com/vcnkl/rpm/environments/spec"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
+
+	"github.com/pkg/errors"
 )
 
 type EnvAction struct {
@@ -34,10 +35,7 @@ type EnvUpOptions struct {
 }
 
 func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
-	plan, err := a.loadPlan(ctx, opts.Blueprint, renderRuntimeOptions{
-		NoDeps:   opts.NoDeps,
-		NoReload: opts.NoReload,
-	})
+	plan, err := a.loadPlan(ctx, opts.Blueprint)
 	if err != nil {
 		return err
 	}
@@ -118,7 +116,7 @@ func stderrOrDefault(w io.Writer) io.Writer {
 }
 
 func (a *EnvAction) Down(ctx context.Context, opts EnvDownOptions) error {
-	plan, err := a.loadPlan(ctx, opts.Blueprint, renderRuntimeOptions{})
+	plan, err := a.loadPlan(ctx, opts.Blueprint)
 	if err != nil {
 		return err
 	}
@@ -141,6 +139,7 @@ func (a *EnvAction) Prune(_ context.Context, opts EnvPruneOptions) error {
 func (a *EnvAction) dockerCLI() *runtimedocker.CLI {
 	return runtimedocker.NewCLI(runtimedocker.Options{
 		VolumeNamer: runtimedocker.NewFileVolumeNamer(a.volumeCachePath(), a.config.Repo().Project.Name),
+		Shell:       a.config.Repo().Shell,
 	})
 }
 
@@ -148,27 +147,73 @@ func (a *EnvAction) volumeCachePath() string {
 	return filepath.Join(a.config.CacheDir(), "env-volumes.json")
 }
 
-type renderRuntimeOptions struct {
-	NoDeps   bool
-	NoReload bool
+func (a *EnvAction) loadPlan(ctx context.Context, name string) (*envstarlark.RuntimePlan, error) {
+	path := generator.CachePath(a.config, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.Wrapf(err, "generated Starlark not found at %s; run `rpm env render %s`", path, name)
+		}
+		return nil, errors.Wrapf(err, "failed to read generated Starlark %s", path)
+	}
+	plan, err := envstarlark.InterpretSource(ctx, name, path, data)
+	if err != nil {
+		return nil, err
+	}
+	return expandRepoRoot(plan, a.config.RepoRoot()), nil
 }
 
-func (a *EnvAction) loadPlan(ctx context.Context, name string, opts renderRuntimeOptions) (*envstarlark.RuntimePlan, error) {
-	blueprint, err := envconfig.LoadBlueprint(a.config, name)
-	if err != nil {
-		return nil, err
+func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark.RuntimePlan {
+	next := *plan
+	next.Environment.Variables = expandMap(next.Environment.Variables, repoRoot)
+	next.Dependencies = append([]envstarlark.Dependency{}, plan.Dependencies...)
+	for i := range next.Dependencies {
+		next.Dependencies[i].Env = expandMap(next.Dependencies[i].Env, repoRoot)
+		next.Dependencies[i].Ports = expandList(next.Dependencies[i].Ports, repoRoot)
+		next.Dependencies[i].Volumes = expandList(next.Dependencies[i].Volumes, repoRoot)
+		next.Dependencies[i].ReadinessCmd = expandString(next.Dependencies[i].ReadinessCmd, repoRoot)
 	}
-	blueprint = envspec.BlueprintWithRuntimeOptions(blueprint, envspec.RuntimeOptions{
-		NoDeps:   opts.NoDeps,
-		NoReload: opts.NoReload,
-	})
-	resolved, err := envspec.Resolve(a.config, blueprint)
-	if err != nil {
-		return nil, err
+	next.BeforeTargets = append([]envstarlark.TargetProcess{}, plan.BeforeTargets...)
+	for i := range next.BeforeTargets {
+		next.BeforeTargets[i] = expandTargetProcess(next.BeforeTargets[i], repoRoot)
 	}
-	data, err := generator.Render(resolved)
-	if err != nil {
-		return nil, err
+	next.Targets = append([]envstarlark.TargetProcess{}, plan.Targets...)
+	for i := range next.Targets {
+		next.Targets[i] = expandTargetProcess(next.Targets[i], repoRoot)
 	}
-	return envstarlark.InterpretSource(ctx, name, generator.CachePath(a.config, name), data)
+	next.Watches = append([]envstarlark.Watch{}, plan.Watches...)
+	for i := range next.Watches {
+		next.Watches[i].Roots = expandList(next.Watches[i].Roots, repoRoot)
+		next.Watches[i].Ignore = expandList(next.Watches[i].Ignore, repoRoot)
+	}
+	return &next
+}
+
+func expandTargetProcess(target envstarlark.TargetProcess, repoRoot string) envstarlark.TargetProcess {
+	target.WorkingDir = expandString(target.WorkingDir, repoRoot)
+	target.Env = expandMap(target.Env, repoRoot)
+	return target
+}
+
+func expandMap(values map[string]string, repoRoot string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	next := make(map[string]string, len(values))
+	for key, value := range values {
+		next[key] = expandString(value, repoRoot)
+	}
+	return next
+}
+
+func expandList(values []string, repoRoot string) []string {
+	next := append([]string{}, values...)
+	for i := range next {
+		next[i] = expandString(next[i], repoRoot)
+	}
+	return next
+}
+
+func expandString(value string, repoRoot string) string {
+	return strings.ReplaceAll(value, generator.RepoRootToken, repoRoot)
 }

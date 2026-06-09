@@ -12,6 +12,8 @@ import (
 
 	rootconfig "github.com/vcnkl/rpm/config"
 	envconfig "github.com/vcnkl/rpm/environments/config"
+	"github.com/vcnkl/rpm/environments/generator"
+	envspec "github.com/vcnkl/rpm/environments/spec"
 	"github.com/vcnkl/rpm/models"
 	envtui "github.com/vcnkl/rpm/ui/env-tui"
 
@@ -77,7 +79,7 @@ func createNonInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if err != nil {
 		return err
 	}
-	return envconfig.WriteBlueprint(repo, blueprint)
+	return writeBlueprintAndGenerated(repo, blueprint)
 }
 
 func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
@@ -147,7 +149,7 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if err := validateBeforeRefs(repo, targetRefs(targets), blueprint.Before); err != nil {
 		return err
 	}
-	return envconfig.WriteBlueprint(repo, blueprint)
+	return writeBlueprintAndGenerated(repo, blueprint)
 }
 
 func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
@@ -192,7 +194,7 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if err != nil {
 		return err
 	}
-	return envconfig.WriteBlueprint(repo, blueprint)
+	return writeBlueprintAndGenerated(repo, blueprint)
 }
 
 func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
@@ -253,7 +255,19 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if err := validateDependencyRefs(repo, next.DependencyPolicy.Exclude); err != nil {
 		return err
 	}
-	return envconfig.WriteBlueprint(repo, next)
+	return writeBlueprintAndGenerated(repo, next)
+}
+
+func writeBlueprintAndGenerated(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) error {
+	if err := envconfig.WriteBlueprint(repo, blueprint); err != nil {
+		return err
+	}
+	resolved, err := envspec.Resolve(repo, blueprint)
+	if err != nil {
+		return err
+	}
+	_, err = generator.Write(repo, resolved, "")
+	return err
 }
 
 func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, beforeRefs []string, reload bool, targetReload map[string]bool, deps bool) (*models.EnvironmentBlueprint, error) {
