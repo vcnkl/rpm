@@ -66,9 +66,32 @@ func TestUpStartsDependenciesAndUsesEnabledWatches(t *testing.T) {
 
 	assert.Equal(t, 1, deps.upCalls)
 	assert.Equal(t, 1, watcher.calls)
+	assert.Equal(t, 10*time.Millisecond, watcher.debounce)
 	require.Len(t, watcher.watches, 1)
 	assert.Equal(t, "api:serve", watcher.watches[0].Target)
 	assert.Contains(t, watcher.watches[0].Roots, "/repo/api")
+}
+
+func TestUpReturnsInvalidLiveReloadDebounce(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	deps := &fakeDependencyRunner{}
+	watcher := &fakeWatcher{}
+	plan := testPlan()
+	plan.Environment.LiveReload.Debounce = "soon"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		ReloadWatcher:    watcher,
+		EventSink:        &eventRecorder{},
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "live_reload.debounce")
+	assert.Zero(t, watcher.calls)
+	assert.Equal(t, 1, processes.stopCount("api:serve"))
+	assert.Equal(t, 1, deps.downCalls)
 }
 
 func TestUpReturnsProcessStartupFailure(t *testing.T) {
@@ -619,16 +642,18 @@ func (r *fakeDependencyRunner) Down(context.Context, string, *envstarlark.Runtim
 }
 
 type fakeWatcher struct {
-	calls   int
-	watches []envstarlark.Watch
-	trigger bool
-	block   bool
-	ready   chan struct{}
+	calls    int
+	watches  []envstarlark.Watch
+	debounce time.Duration
+	trigger  bool
+	block    bool
+	ready    chan struct{}
 }
 
-func (w *fakeWatcher) Watch(ctx context.Context, watches []envstarlark.Watch, onChange func(target string, path string)) error {
+func (w *fakeWatcher) Watch(ctx context.Context, watches []envstarlark.Watch, debounce time.Duration, onChange func(target string, path string)) error {
 	w.calls++
 	w.watches = append(w.watches, watches...)
+	w.debounce = debounce
 	if w.ready != nil {
 		close(w.ready)
 	}

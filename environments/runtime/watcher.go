@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"path/filepath"
+	"time"
 
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 	"github.com/vcnkl/rpm/watcher"
@@ -14,7 +15,7 @@ func NewWatcherFactory() *WatcherFactory {
 	return &WatcherFactory{}
 }
 
-func (WatcherFactory) Watch(ctx context.Context, watches []envstarlark.Watch, onChange func(target string, path string)) error {
+func (WatcherFactory) Watch(ctx context.Context, watches []envstarlark.Watch, debounce time.Duration, onChange func(target string, path string)) error {
 	type targetWatch struct {
 		target string
 		roots  []string
@@ -35,7 +36,7 @@ func (WatcherFactory) Watch(ctx context.Context, watches []envstarlark.Watch, on
 
 	errCh := make(chan error, len(entries))
 	for _, entry := range entries {
-		w, err := watcher.NewWatcher(entry.roots, entry.ignore)
+		w, err := watcher.NewWatcherWithDebounce(entry.roots, entry.ignore, debounce)
 		if err != nil {
 			return err
 		}

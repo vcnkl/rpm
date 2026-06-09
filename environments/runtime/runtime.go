@@ -40,7 +40,7 @@ type DependencyStartup struct {
 }
 
 type ReloadWatcher interface {
-	Watch(ctx context.Context, watches []envstarlark.Watch, onChange func(target string, path string)) error
+	Watch(ctx context.Context, watches []envstarlark.Watch, debounce time.Duration, onChange func(target string, path string)) error
 }
 
 type EventSink interface {
@@ -165,10 +165,16 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	if r.reloadEnabled(plan) && r.opts.ReloadWatcher != nil {
 		watches := enabledWatches(plan)
 		if len(watches) > 0 {
+			debounce, err := time.ParseDuration(plan.Environment.LiveReload.Debounce)
+			if err != nil {
+				r.stopProcesses(ctx)
+				r.stopDependencies(ctx, plan, startedDeps)
+				return fmt.Errorf("invalid live_reload.debounce: %w", err)
+			}
 			watchCtx, cancel := context.WithCancel(ctx)
 			watchCancel = cancel
 			go func() {
-				if err := r.opts.ReloadWatcher.Watch(watchCtx, watches, func(ref string, path string) {
+				if err := r.opts.ReloadWatcher.Watch(watchCtx, watches, debounce, func(ref string, path string) {
 					r.reloadTarget(ctx, plan, ref, path)
 				}); err != nil && ctx.Err() == nil {
 					r.done <- processExit{err: err}
