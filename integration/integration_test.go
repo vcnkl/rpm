@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/vcnkl/rpm/actions"
+	rootconfig "github.com/vcnkl/rpm/config"
 )
 
 func buildRpmBinary(t *testing.T) string {
@@ -92,14 +94,35 @@ func startTestContainer(t *testing.T, ctx context.Context) testcontainers.Contai
 	return ctr
 }
 
-func TestIntegration_EnvHelp(t *testing.T) {
+func shouldSkip(t *testing.T) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-
 	if os.Getenv("SKIP_INTEGRATION") == "true" {
 		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
 	}
+}
+
+func TestIntegration_EnvUpNonInteractiveBypassesNodeTUI(t *testing.T) {
+	shouldSkip(t)
+	t.Parallel()
+
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join("testdata", "sample-repo", "repo.yml"))
+	action := actions.NewEnvAction(repo, nil, nil)
+
+	err := action.Up(context.Background(), actions.EnvUpOptions{
+		Blueprint:      "local-stack",
+		NoDeps:         true,
+		NoReload:       true,
+		NonInteractive: true,
+	})
+
+	require.NoError(t, err)
+}
+
+func TestIntegration_EnvHelp(t *testing.T) {
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -125,13 +148,7 @@ func TestIntegration_EnvHelp(t *testing.T) {
 }
 
 func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -170,13 +187,7 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 }
 
 func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -209,13 +220,7 @@ func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
 }
 
 func TestIntegration_BuildCommand(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -305,13 +310,7 @@ func stripDockerStreamHeaders(output string) string {
 }
 
 func TestIntegration_TargetResolution(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -364,13 +363,7 @@ func TestIntegration_TargetResolution(t *testing.T) {
 }
 
 func TestIntegration_WorkingDirectory(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
@@ -390,13 +383,7 @@ func TestIntegration_WorkingDirectory(t *testing.T) {
 }
 
 func TestIntegration_ErrorHandling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("skipping integration test via SKIP_INTEGRATION env var")
-	}
+	shouldSkip(t)
 
 	ctx := context.Background()
 	ctr := startTestContainer(t, ctx)
