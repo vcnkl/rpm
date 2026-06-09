@@ -180,7 +180,7 @@ func sourceBundlePath() (string, error) {
 	}
 	path := filepath.Join(filepath.Dir(filename), "dist", "index.js")
 	if _, err := os.Stat(path); err != nil {
-		return "", errors.Wrap(err, "env TUI bundle is missing; run `cd ui/env-tui && yarn build`")
+		return "", errors.Wrap(err, "env TUI bundle is missing; run `cd environments/tui && yarn build`")
 	}
 	return path, nil
 }

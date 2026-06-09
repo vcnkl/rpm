@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
+	envtui "github.com/vcnkl/rpm/environments/tui"
 	"github.com/vcnkl/rpm/models"
-	envtui "github.com/vcnkl/rpm/ui/env-tui"
 )
 
 func targetSelectItems(targets []*models.Target, selected []string) []envtui.SelectionItem {

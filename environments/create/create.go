@@ -14,8 +14,8 @@ import (
 	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/environments/generator"
 	envspec "github.com/vcnkl/rpm/environments/spec"
+	envtui "github.com/vcnkl/rpm/environments/tui"
 	"github.com/vcnkl/rpm/models"
-	envtui "github.com/vcnkl/rpm/ui/env-tui"
 
 	"github.com/pkg/errors"
 )

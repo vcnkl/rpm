@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
-	envtui "github.com/vcnkl/rpm/ui/env-tui"
+	envtui "github.com/vcnkl/rpm/environments/tui"
 )
 
 func TestEncodeEventsWritesNDJSON(t *testing.T) {
