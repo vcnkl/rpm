@@ -8,7 +8,6 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/docker/go-sdk/client v0.1.0-alpha013
 	github.com/docker/go-sdk/container v0.1.0-alpha015
-	github.com/docker/go-sdk/context v0.1.0-alpha013
 	github.com/docker/go-sdk/network v0.1.0-alpha013
 	github.com/docker/go-sdk/volume v0.1.0-alpha005
 	github.com/fsnotify/fsnotify v1.9.0
@@ -44,6 +43,7 @@ require (
 	github.com/docker/docker v28.5.1+incompatible // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-sdk/config v0.1.0-alpha013 // indirect
+	github.com/docker/go-sdk/context v0.1.0-alpha013 // indirect
 	github.com/docker/go-sdk/image v0.1.0-alpha015 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
