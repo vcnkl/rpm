@@ -298,6 +298,42 @@ func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	assert.Equal(t, []string{"a:serve", "z:serve"}, []string{resolved.Targets[0].Ref, resolved.Targets[1].Ref})
 }
 
+func TestResolveIncludesBundleDependenciesWhenPolicyDisablesThem(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+env:
+  deps:
+    - name: postgres
+      image: postgres:16
+    - name: redis
+      image: redis:7
+`), 0644))
+	writeBundleWithDependencies(t, repoRoot, "api", []string{"postgres"}, "serve", "migrate")
+	writeBundleWithDependencies(t, repoRoot, "worker", []string{"redis"}, "serve")
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:   "local",
+		Before: []string{"api:migrate"},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve", Env: map[string]string{}},
+			{Ref: "worker:serve", Env: map[string]string{}},
+		},
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: false,
+			Include: []string{},
+			Exclude: []string{"postgres", "redis"},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"postgres", "redis"}, dependencyRefs(resolved.Dependencies))
+}
+
 func TestResolveUsesBundleTargetReloadConfig(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
@@ -359,6 +395,21 @@ func writeBundleWithTargets(t *testing.T, repoRoot string, name string, targets 
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(content), 0644))
 }
 
+func writeBundleWithDependencies(t *testing.T, repoRoot string, name string, deps []string, targets ...string) {
+	t.Helper()
+	bundleRoot := filepath.Join(repoRoot, name)
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	content := "name: " + name + "\nenv:\n  deps:\n"
+	for _, dep := range deps {
+		content += "    - " + dep + "\n"
+	}
+	content += "targets:\n"
+	for _, target := range targets {
+		content += "  - name: " + target + "\n    cmd: echo " + target + "\n"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(content), 0644))
+}
+
 func writeBundleWithReload(t *testing.T, repoRoot string, name string, reload bool) {
 	t.Helper()
 	bundleRoot := filepath.Join(repoRoot, name)
@@ -385,6 +436,14 @@ func beforeRefs(targets []spec.BeforeTarget) []string {
 	refs := make([]string, 0, len(targets))
 	for _, target := range targets {
 		refs = append(refs, target.Ref)
+	}
+	return refs
+}
+
+func dependencyRefs(dependencies []spec.Dependency) []string {
+	refs := make([]string, 0, len(dependencies))
+	for _, dep := range dependencies {
+		refs = append(refs, dep.Ref)
 	}
 	return refs
 }

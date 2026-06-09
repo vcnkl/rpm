@@ -75,7 +75,7 @@ func createNonInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 	if len(opts.Targets) == 0 {
 		return ErrMissingTargets
 	}
-	blueprint, err := buildBlueprint(repo, opts.Name, opts.Targets, opts.Before, opts.ReloadEnabled, opts.TargetReload, opts.Dependencies)
+	blueprint, err := buildBlueprint(repo, opts.Name, opts.Targets, opts.Before, opts.ReloadEnabled, opts.TargetReload)
 	if err != nil {
 		return err
 	}
@@ -126,21 +126,6 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		target.Reload = &value
 		targets[ref] = target
 	}
-	if opts.Dependencies != nil {
-		blueprint.DependencyPolicy.Enabled = *opts.Dependencies
-	}
-	if len(opts.IncludeDeps) > 0 {
-		if err := validateDependencyRefs(repo, opts.IncludeDeps); err != nil {
-			return err
-		}
-		blueprint.DependencyPolicy.Include = opts.IncludeDeps
-	}
-	if len(opts.ExcludeDeps) > 0 {
-		if err := validateDependencyRefs(repo, opts.ExcludeDeps); err != nil {
-			return err
-		}
-		blueprint.DependencyPolicy.Exclude = opts.ExcludeDeps
-	}
 	blueprint.Targets = targetSlice(targets)
 	blueprint.Before = beforeSlice(before)
 	if len(blueprint.Targets) == 0 {
@@ -149,6 +134,7 @@ func editNonInteractive(repo *rootconfig.Config, opts EditOptions) error {
 	if err := validateBeforeRefs(repo, targetRefs(targets), blueprint.Before); err != nil {
 		return err
 	}
+	blueprint.DependencyPolicy = requiredDependencyPolicy(repo, append(targetRefs(targets), blueprint.Before...))
 	return writeBlueprintAndGenerated(repo, blueprint)
 }
 
@@ -186,11 +172,7 @@ func createInteractive(repo *rootconfig.Config, opts CreateOptions) error {
 		return err
 	}
 	reload := !disableReload
-	deps, err := prompt.askBool("Enable dependencies", false)
-	if err != nil {
-		return err
-	}
-	blueprint, err := buildBlueprint(repo, name, targets, before, reload, nil, deps)
+	blueprint, err := buildBlueprint(repo, name, targets, before, reload, nil)
 	if err != nil {
 		return err
 	}
@@ -225,11 +207,7 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 		return err
 	}
 	reload := !disableReload
-	deps, err := prompt.askBool("Enable dependencies", blueprint.DependencyPolicy.Enabled)
-	if err != nil {
-		return err
-	}
-	next, err := buildBlueprint(repo, blueprint.Name, targets, before, reload, nil, deps)
+	next, err := buildBlueprint(repo, blueprint.Name, targets, before, reload, nil)
 	if err != nil {
 		return err
 	}
@@ -238,23 +216,7 @@ func editInteractive(repo *rootconfig.Config, opts EditOptions) error {
 			next.Targets[i].Env = existing.Env
 		}
 	}
-	include, err := prompt.chooseDependencies("Dependency include refs", dependencyRefs(repo), blueprint.DependencyPolicy.Include)
-	if err != nil {
-		return err
-	}
-	exclude, err := prompt.chooseDependencies("Dependency exclude refs", dependencyRefs(repo), blueprint.DependencyPolicy.Exclude)
-	if err != nil {
-		return err
-	}
 	next.Variables = blueprint.Variables
-	next.DependencyPolicy.Include = include
-	next.DependencyPolicy.Exclude = exclude
-	if err := validateDependencyRefs(repo, next.DependencyPolicy.Include); err != nil {
-		return err
-	}
-	if err := validateDependencyRefs(repo, next.DependencyPolicy.Exclude); err != nil {
-		return err
-	}
 	return writeBlueprintAndGenerated(repo, next)
 }
 
@@ -270,7 +232,7 @@ func writeBlueprintAndGenerated(repo *rootconfig.Config, blueprint *models.Envir
 	return err
 }
 
-func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, beforeRefs []string, reload bool, targetReload map[string]bool, deps bool) (*models.EnvironmentBlueprint, error) {
+func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, beforeRefs []string, reload bool, targetReload map[string]bool) (*models.EnvironmentBlueprint, error) {
 	seen := make(map[string]bool)
 	targets := make([]models.EnvironmentTarget, 0, len(targetRefs))
 	for _, ref := range targetRefs {
@@ -303,16 +265,12 @@ func buildBlueprint(repo *rootconfig.Config, name string, targetRefs []string, b
 		return nil, err
 	}
 	return &models.EnvironmentBlueprint{
-		Version:   1,
-		Name:      name,
-		Variables: map[string]string{},
-		Before:    before,
-		Targets:   targets,
-		DependencyPolicy: models.DependencyPolicy{
-			Enabled: deps,
-			Include: selectedDependencyRefs(repo, append(append([]string{}, targetRefs...), before...), deps),
-			Exclude: []string{},
-		},
+		Version:          1,
+		Name:             name,
+		Variables:        map[string]string{},
+		Before:           before,
+		Targets:          targets,
+		DependencyPolicy: requiredDependencyPolicy(repo, append(append([]string{}, targetRefs...), before...)),
 		ReloadPolicy: models.ReloadPolicy{
 			Enabled:  reload,
 			Debounce: "100ms",
@@ -378,20 +336,16 @@ func validateTargetRef(repo *rootconfig.Config, ref string) error {
 	return nil
 }
 
-func validateDependencyRefs(repo *rootconfig.Config, refs []string) error {
-	known := dependencySet(repo)
-	for _, ref := range refs {
-		if !known[ref] {
-			return errors.Wrapf(envconfig.ErrUnknownDependencyRef, "%s", ref)
-		}
+func requiredDependencyPolicy(repo *rootconfig.Config, targetRefs []string) models.DependencyPolicy {
+	refs := requiredDependencyRefs(repo, targetRefs)
+	return models.DependencyPolicy{
+		Enabled: len(refs) > 0,
+		Include: refs,
+		Exclude: []string{},
 	}
-	return nil
 }
 
-func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enabled bool) []string {
-	if !enabled {
-		return []string{}
-	}
+func requiredDependencyRefs(repo *rootconfig.Config, targetRefs []string) []string {
 	bundles := make(map[string]bool)
 	for _, ref := range targetRefs {
 		bundle, _, ok := strings.Cut(ref, ":")
@@ -414,23 +368,6 @@ func selectedDependencyRefs(repo *rootconfig.Config, targetRefs []string, enable
 	}
 	sort.Strings(refs)
 	return refs
-}
-
-func dependencyRefs(repo *rootconfig.Config) []string {
-	var refs []string
-	for ref := range dependencySet(repo) {
-		refs = append(refs, ref)
-	}
-	sort.Strings(refs)
-	return refs
-}
-
-func dependencySet(repo *rootconfig.Config) map[string]bool {
-	known := make(map[string]bool)
-	for name := range repo.EnvironmentDependencies() {
-		known[name] = true
-	}
-	return known
 }
 
 func targetMap(targets []models.EnvironmentTarget) map[string]models.EnvironmentTarget {
@@ -628,34 +565,4 @@ func runnableTargets(targets []*models.Target) []*models.Target {
 		return choices[i].ID() < choices[j].ID()
 	})
 	return choices
-}
-
-func (p prompt) chooseDependencies(label string, refs []string, selected []string) ([]string, error) {
-	if envtui.CanSelect(p.in, p.out) {
-		return envtui.Select(context.Background(), p.in, p.out, envtui.SelectionRequest{
-			Title: label,
-			Items: dependencySelectItems(refs, selected),
-		})
-	}
-	answer, err := p.askDefault(label, strings.Join(selected, ","))
-	if err != nil {
-		return nil, err
-	}
-	return splitRefs(answer), nil
-}
-
-func splitRefs(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return []string{}
-	}
-	parts := strings.Split(value, ",")
-	refs := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			refs = append(refs, part)
-		}
-	}
-	sort.Strings(refs)
-	return refs
 }

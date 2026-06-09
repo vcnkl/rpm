@@ -4,7 +4,6 @@ import "github.com/vcnkl/rpm/models"
 
 type RuntimeOptions struct {
 	NoReload bool
-	NoDeps   bool
 }
 
 func BlueprintWithRuntimeOptions(blueprint *models.EnvironmentBlueprint, opts RuntimeOptions) *models.EnvironmentBlueprint {
@@ -19,11 +18,6 @@ func BlueprintWithRuntimeOptions(blueprint *models.EnvironmentBlueprint, opts Ru
 		Enabled: blueprint.DependencyPolicy.Enabled,
 		Include: append([]string{}, blueprint.DependencyPolicy.Include...),
 		Exclude: append([]string{}, blueprint.DependencyPolicy.Exclude...),
-	}
-	if opts.NoDeps {
-		next.DependencyPolicy.Enabled = false
-		next.DependencyPolicy.Include = []string{}
-		next.DependencyPolicy.Exclude = []string{}
 	}
 	if opts.NoReload {
 		next.ReloadPolicy.Enabled = false

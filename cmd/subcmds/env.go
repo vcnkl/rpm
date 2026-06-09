@@ -50,7 +50,7 @@ func envCreateCmd() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:  "deps",
-				Usage: "Enable dependencies for selected target bundles",
+				Usage: "Accepted for compatibility; dependencies are derived from selected bundles",
 			},
 			&cli.BoolFlag{
 				Name:  "reload",
@@ -131,11 +131,11 @@ func envEditCmd() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:  "deps",
-				Usage: "Enable dependencies",
+				Usage: "Accepted for compatibility; dependencies are derived from selected bundles",
 			},
 			&cli.BoolFlag{
 				Name:  "no-deps",
-				Usage: "Disable dependencies",
+				Usage: "Accepted for compatibility; dependencies are derived from selected bundles",
 			},
 			&cli.BoolFlag{
 				Name:  "reload",
@@ -151,11 +151,11 @@ func envEditCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "include-dep",
-				Usage: "Set dependency include ref",
+				Usage: "Accepted for compatibility; dependencies are derived from selected bundles",
 			},
 			&cli.StringSliceFlag{
 				Name:  "exclude-dep",
-				Usage: "Set dependency exclude ref",
+				Usage: "Accepted for compatibility; dependencies are derived from selected bundles",
 			},
 		},
 		Action: func(ctx *cli.Context) error {
@@ -340,7 +340,6 @@ func envPruneCmd() *cli.Command {
 
 type renderOptions struct {
 	NoReload bool
-	NoDeps   bool
 }
 
 func renderEnvironment(ctx *cli.Context, name string, out string, opts renderOptions) (string, error) {
@@ -351,7 +350,6 @@ func renderEnvironment(ctx *cli.Context, name string, out string, opts renderOpt
 	}
 	blueprint = spec.BlueprintWithRuntimeOptions(blueprint, spec.RuntimeOptions{
 		NoReload: opts.NoReload,
-		NoDeps:   opts.NoDeps,
 	})
 	resolved, err := spec.Resolve(cfg, blueprint)
 	if err != nil {

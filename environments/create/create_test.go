@@ -23,7 +23,6 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	err := envcreate.RunCreate(repo, envcreate.CreateOptions{
 		Name:           "local-stack",
 		Targets:        []string{"ts-app:web", "go-app:echo-123"},
-		Dependencies:   true,
 		ReloadEnabled:  true,
 		NonInteractive: true,
 	})
@@ -32,7 +31,9 @@ func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.True(t, blueprint.DependencyPolicy.Enabled)
 	assert.Equal(t, []string{"mailhog", "postgres"}, blueprint.DependencyPolicy.Include)
+	assert.Empty(t, blueprint.DependencyPolicy.Exclude)
 	plan := readGeneratedPlan(t, repo, "local-stack")
 	assert.Equal(t, []string{"go-app:echo-123", "ts-app:web"}, []string{plan.Targets[0].Ref, plan.Targets[1].Ref})
 }
@@ -105,6 +106,30 @@ func TestRunEditNonInteractiveAddsTarget(t *testing.T) {
 	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go-app:echo-123", "python-app:echo-456"}, []string{blueprint.Targets[0].Ref, blueprint.Targets[1].Ref})
+	assert.Equal(t, []string{"postgres", "redis"}, blueprint.DependencyPolicy.Include)
+}
+
+func TestRunEditNonInteractiveClearsLegacyDependencyExcludes(t *testing.T) {
+	repo := newTestRepo(t)
+	require.NoError(t, envcreate.RunCreate(repo, envcreate.CreateOptions{
+		Name:           "local-stack",
+		Targets:        []string{"go-app:echo-123"},
+		ReloadEnabled:  true,
+		NonInteractive: true,
+	}))
+
+	err := envcreate.RunEdit(repo, envcreate.EditOptions{
+		Name:           "local-stack",
+		ExcludeDeps:    []string{"postgres"},
+		NonInteractive: true,
+	})
+
+	require.NoError(t, err)
+	blueprint, err := envconfig.LoadBlueprint(repo, "local-stack")
+	require.NoError(t, err)
+	assert.True(t, blueprint.DependencyPolicy.Enabled)
+	assert.Equal(t, []string{"postgres"}, blueprint.DependencyPolicy.Include)
+	assert.Empty(t, blueprint.DependencyPolicy.Exclude)
 }
 
 func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
@@ -122,7 +147,8 @@ func TestRunCreateInteractiveWritesBlueprint(t *testing.T) {
 	assert.True(t, blueprint.ReloadPolicy.Enabled)
 	assert.Nil(t, blueprint.Targets[0].Reload)
 	assert.Nil(t, blueprint.Targets[1].Reload)
-	assert.False(t, blueprint.DependencyPolicy.Enabled)
+	assert.True(t, blueprint.DependencyPolicy.Enabled)
+	assert.Equal(t, []string{"mailhog", "postgres"}, blueprint.DependencyPolicy.Include)
 	assert.FileExists(t, generator.CachePath(repo, "local-stack"))
 }
 

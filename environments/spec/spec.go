@@ -108,14 +108,15 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		})
 		bundleSeen[bundle.Name] = true
 		for _, ref := range bundle.Dependencies {
-			if dependencyIncluded(blueprint.DependencyPolicy, ref) && !dependencySeen[ref] {
-				dep, ok := repo.EnvironmentDependencies()[ref]
-				if !ok {
-					continue
-				}
-				resolved.Dependencies = append(resolved.Dependencies, dependency(dep))
-				dependencySeen[ref] = true
+			if dependencySeen[ref] {
+				continue
 			}
+			dep, ok := repo.EnvironmentDependencies()[ref]
+			if !ok {
+				continue
+			}
+			resolved.Dependencies = append(resolved.Dependencies, dependency(dep))
+			dependencySeen[ref] = true
 		}
 	}
 
@@ -353,26 +354,6 @@ func dependency(dep models.EnvironmentDependency) Dependency {
 
 func bundleConfigPath(bundle *models.Bundle) string {
 	return filepath.ToSlash(filepath.Join(bundle.Path, "rpm.yml"))
-}
-
-func dependencyIncluded(policy models.DependencyPolicy, ref string) bool {
-	if !policy.Enabled {
-		return false
-	}
-	for _, excluded := range policy.Exclude {
-		if excluded == ref {
-			return false
-		}
-	}
-	if len(policy.Include) == 0 {
-		return true
-	}
-	for _, included := range policy.Include {
-		if included == ref {
-			return true
-		}
-	}
-	return false
 }
 
 func appendEnvMap(env []string, values map[string]string) []string {
