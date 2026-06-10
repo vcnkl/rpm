@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -89,13 +90,17 @@ func NewCLI(opts Options) *CLI {
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
+	dependencies, err := normalizeDependencies(blueprint, plan.Dependencies)
+	if err != nil {
+		return envruntime.DependencyStartup{}, err
+	}
 	network := networkName(blueprint)
 	if err := c.backend.EnsureNetwork(ctx, network); err != nil {
 		return envruntime.DependencyStartup{}, err
 	}
 	startup := envruntime.DependencyStartup{Env: make(map[string]string)}
 	startedContainers := []string{}
-	for _, dep := range plan.Dependencies {
+	for _, dep := range dependencies {
 		volumeNames, volumeBinds, err := c.resolveVolumes(ctx, blueprint, dep)
 		if err != nil {
 			c.cleanupStartedContainers(ctx, startedContainers)
@@ -128,6 +133,37 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		}
 	}
 	return startup, nil
+}
+
+func normalizeDependencies(blueprint string, dependencies []envstarlark.Dependency) ([]envstarlark.Dependency, error) {
+	seen := make(map[string]envstarlark.Dependency)
+	normalized := make([]envstarlark.Dependency, 0, len(dependencies))
+	for _, dep := range dependencies {
+		for _, name := range containerNames(blueprint, dep) {
+			existing, ok := seen[name]
+			if !ok {
+				seen[name] = dep
+				normalized = append(normalized, dep)
+				continue
+			}
+			if sameDependency(existing, dep) {
+				continue
+			}
+			return nil, envruntime.NewDependencyError(dep.Ref, fmt.Errorf("duplicate dependency container %q for refs %q and %q", name, existing.Ref, dep.Ref))
+		}
+	}
+	return normalized, nil
+}
+
+func sameDependency(left, right envstarlark.Dependency) bool {
+	return left.Ref == right.Ref &&
+		left.ConfigPath == right.ConfigPath &&
+		left.Name == right.Name &&
+		left.Image == right.Image &&
+		reflect.DeepEqual(left.Env, right.Env) &&
+		reflect.DeepEqual(left.Ports, right.Ports) &&
+		reflect.DeepEqual(left.Volumes, right.Volumes) &&
+		left.ReadinessCmd == right.ReadinessCmd
 }
 
 func (c *CLI) cleanupStartedContainers(ctx context.Context, names []string) {

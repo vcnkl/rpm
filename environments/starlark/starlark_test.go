@@ -78,6 +78,20 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 	assert.Empty(t, plan.Watches)
 }
 
+func TestInterpretRejectsDuplicateDependencyRefs(t *testing.T) {
+	src := []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_dependency(ref = "rabbitmq", config = "repo.yml")
+rpm_dependency(ref = "rabbitmq", config = "repo.yml")
+rpm_run(order = ["rabbitmq"])
+`)
+
+	_, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `duplicate dependency ref "rabbitmq"`)
+}
+
 func TestInterpretRejectsUnsupportedValuesWithBacktrace(t *testing.T) {
 	src := []byte(`
 def broken():

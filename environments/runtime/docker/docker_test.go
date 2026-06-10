@@ -406,6 +406,57 @@ func TestUpBuildsOneDockerContainerPerDependency(t *testing.T) {
 	}, startup.Env)
 }
 
+func TestUpCollapsesIdenticalDuplicateDependencies(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	dependency := envstarlark.Dependency{
+		Ref:          "rabbitmq",
+		Name:         "rabbitmq",
+		Image:        "rabbitmq:4.1.3",
+		Ports:        []string{"5672:5672"},
+		ReadinessCmd: "true",
+	}
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{dependency, dependency},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"run rpm-dev-rabbitmq",
+	}, backend.calls)
+	assert.Equal(t, []docker.ContainerSpec{{
+		Name:    "rpm-dev-rabbitmq",
+		Image:   "rabbitmq:4.1.3",
+		Network: "rpm-dev",
+		Ports:   []string{"5672:5672"},
+	}}, backend.containers)
+	assert.Equal(t, map[string]string{"RABBITMQ_PORT": "5672"}, startup.Env)
+}
+
+func TestUpRejectsConflictingDuplicateDependencyContainersBeforeStartup(t *testing.T) {
+	backend := &recordingBackend{}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{
+			{Ref: "rabbitmq", Name: "rabbitmq", Image: "rabbitmq:4.1.3", Ports: []string{"5672:5672"}},
+			{Ref: "rabbitmq-alt", Name: "rabbitmq", Image: "rabbitmq:3-management", Ports: []string{"5673:5672"}},
+		},
+	}
+
+	_, err := runner.Up(context.Background(), "dev", plan)
+
+	require.Error(t, err)
+	var depErr envruntime.DependencyError
+	require.True(t, errors.As(err, &depErr))
+	assert.Equal(t, "rabbitmq-alt", depErr.Ref)
+	assert.Contains(t, err.Error(), `duplicate dependency container "rpm-dev-rabbitmq"`)
+	assert.Empty(t, backend.calls)
+	assert.Empty(t, backend.containers)
+}
+
 func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T) {
 	backend := &recordingBackend{
 		runErrs: map[string]error{"rpm-dev-rabbitmq": assert.AnError},

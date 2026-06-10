@@ -173,7 +173,13 @@ func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gosta
 	if err != nil {
 		return nil, err
 	}
-	builder(thread).dependencies = append(builder(thread).dependencies, Dependency{
+	b := builder(thread)
+	for _, dep := range b.dependencies {
+		if dep.Ref == ref {
+			return nil, fmt.Errorf("duplicate dependency ref %q", ref)
+		}
+	}
+	b.dependencies = append(b.dependencies, Dependency{
 		Ref: ref, ConfigPath: configPath, Name: name, Image: image, Env: env, Ports: ports, Volumes: volumes, ReadinessCmd: readinessCmd,
 	})
 	return gostarlark.None, nil
