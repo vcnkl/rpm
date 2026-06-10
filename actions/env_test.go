@@ -55,6 +55,8 @@ rpm_run(order = ["api:migrate", "api:serve"])
 	assert.Equal(t, "postgres", plan.Dependencies[0].Ref)
 	assert.Equal(t, []string{"POSTGRES_PORT=5432"}, plan.Dependencies[0].Ports)
 	assert.Equal(t, "echo \"$POSTGRES_PORT\"", plan.BeforeTargets[0].Command)
+	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.BeforeTargets[0].DotenvFiles)
+	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.Targets[0].DotenvFiles)
 }
 
 func TestLoadPlanResolvesExplicitDependencyConfigRefs(t *testing.T) {

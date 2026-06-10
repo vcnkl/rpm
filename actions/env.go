@@ -198,6 +198,7 @@ func expandTargetProcess(target envstarlark.TargetProcess, repoRoot string) envs
 	target.WorkingDir = expandString(target.WorkingDir, repoRoot)
 	target.Env = expandMap(target.Env, repoRoot)
 	target.DotenvEnv = expandMap(target.DotenvEnv, repoRoot)
+	target.DotenvFiles = expandList(target.DotenvFiles, repoRoot)
 	return target
 }
 
@@ -302,23 +303,25 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 	}
 	for _, target := range env.BeforeTargets {
 		plan.BeforeTargets = append(plan.BeforeTargets, envstarlark.TargetProcess{
-			Ref:        target.Ref,
-			ConfigPath: target.ConfigPath,
-			Command:    target.Command,
-			WorkingDir: target.WorkingDir,
-			Env:        envVarMap(target.Env),
-			DotenvEnv:  envVarMap(target.DotenvEnv),
+			Ref:         target.Ref,
+			ConfigPath:  target.ConfigPath,
+			Command:     target.Command,
+			WorkingDir:  target.WorkingDir,
+			Env:         envVarMap(target.Env),
+			DotenvEnv:   envVarMap(target.DotenvEnv),
+			DotenvFiles: append([]string{}, target.Dotenv.Files...),
 		})
 	}
 	for _, target := range env.Targets {
 		plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
-			Ref:        target.Ref,
-			ConfigPath: target.ConfigPath,
-			Command:    target.Command,
-			WorkingDir: target.WorkingDir,
-			Env:        envVarMap(target.ExplicitEnv),
-			DotenvEnv:  envVarMap(target.DotenvEnv),
-			Reload:     target.Reload,
+			Ref:         target.Ref,
+			ConfigPath:  target.ConfigPath,
+			Command:     target.Command,
+			WorkingDir:  target.WorkingDir,
+			Env:         envVarMap(target.ExplicitEnv),
+			DotenvEnv:   envVarMap(target.DotenvEnv),
+			DotenvFiles: append([]string{}, target.Dotenv.Files...),
+			Reload:      target.Reload,
 		})
 		plan.Watches = append(plan.Watches, envstarlark.Watch{
 			Target:  target.Ref,

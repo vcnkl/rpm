@@ -16,6 +16,7 @@ import (
 
 	"github.com/pkg/errors"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	rpmexec "github.com/vcnkl/rpm/exec"
 )
 
 type PlanLoader interface {
@@ -726,6 +727,7 @@ func planWithDependencyEnv(plan *envstarlark.RuntimePlan, env map[string]string)
 	if len(env) == 0 {
 		return plan
 	}
+	syncDependencyEnvDotenvFiles(plan, env)
 	next := *plan
 	next.BeforeTargets = append([]envstarlark.TargetProcess{}, plan.BeforeTargets...)
 	for i := range next.BeforeTargets {
@@ -738,12 +740,109 @@ func planWithDependencyEnv(plan *envstarlark.RuntimePlan, env map[string]string)
 	return &next
 }
 
+const (
+	dotenvBlockBegin = "# >>> rpm dependency env (managed by `rpm env up`) >>>"
+	dotenvBlockEnd   = "# <<< rpm dependency env <<<"
+)
+
+// syncDependencyEnvDotenvFiles defines dependency env vars (such as published
+// ports) inside the dotenv files that reference them. Processes get resolved
+// values injected into their environment, but applications that reload dotenv
+// files themselves expand ${VAR} from the file's own scope, so the definitions
+// must exist in the file for those values to resolve.
+func syncDependencyEnvDotenvFiles(plan *envstarlark.RuntimePlan, env map[string]string) {
+	seen := make(map[string]bool)
+	targets := append(append([]envstarlark.TargetProcess{}, plan.BeforeTargets...), plan.Targets...)
+	for _, target := range targets {
+		for _, file := range target.DotenvFiles {
+			if seen[file] {
+				continue
+			}
+			seen[file] = true
+			upsertDependencyEnvBlock(file, env)
+		}
+	}
+}
+
+// upsertDependencyEnvBlock prepends a managed block defining the dependency
+// env vars a dotenv file references, replacing any block from a previous run.
+// The block sits at the top of the file because dotenv loaders expand ${VAR}
+// from definitions made earlier in the same file. Best effort: unreadable or
+// unwritable files are left alone.
+func upsertDependencyEnvBlock(path string, env map[string]string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	content := string(data)
+	body, hadBlock := stripDependencyEnvBlock(content)
+	keys := referencedEnvKeys(body, env)
+	if len(keys) == 0 {
+		if hadBlock {
+			_ = os.WriteFile(path, []byte(body), dotenvFileMode(path))
+		}
+		return
+	}
+	var block strings.Builder
+	block.WriteString(dotenvBlockBegin + "\n")
+	for _, key := range keys {
+		block.WriteString(key + "=" + env[key] + "\n")
+	}
+	block.WriteString(dotenvBlockEnd + "\n")
+	next := block.String() + body
+	if next == content {
+		return
+	}
+	_ = os.WriteFile(path, []byte(next), dotenvFileMode(path))
+}
+
+func stripDependencyEnvBlock(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	kept := make([]string, 0, len(lines))
+	stripped := false
+	inBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == dotenvBlockBegin {
+			inBlock = true
+			stripped = true
+			continue
+		}
+		if inBlock {
+			if trimmed == dotenvBlockEnd {
+				inBlock = false
+			}
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n"), stripped
+}
+
+func referencedEnvKeys(content string, env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		if strings.Contains(content, "${"+key+"}") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func dotenvFileMode(path string) os.FileMode {
+	if info, err := os.Stat(path); err == nil {
+		return info.Mode().Perm()
+	}
+	return 0o644
+}
+
 func targetWithDependencyEnv(target envstarlark.TargetProcess, env map[string]string) envstarlark.TargetProcess {
 	values := copyStringMap(target.Env)
 	if values == nil {
 		values = make(map[string]string)
 	}
-	dotenv := copyStringMap(target.DotenvEnv)
+	dotenv := targetDotenvEnv(target)
 	for key, value := range dotenv {
 		dotenv[key] = substituteEnv(value, env)
 		values[key] = dotenv[key]
@@ -754,6 +853,23 @@ func targetWithDependencyEnv(target envstarlark.TargetProcess, env map[string]st
 	target.Env = values
 	target.DotenvEnv = dotenv
 	return target
+}
+
+func targetDotenvEnv(target envstarlark.TargetProcess) map[string]string {
+	values := make(map[string]string)
+	for _, file := range target.DotenvFiles {
+		fileVars, err := rpmexec.LoadDotenv(file)
+		if err != nil {
+			continue
+		}
+		for key, value := range fileVars {
+			values[key] = value
+		}
+	}
+	if len(values) > 0 || len(target.DotenvFiles) > 0 {
+		return values
+	}
+	return copyStringMap(target.DotenvEnv)
 }
 
 func substituteEnv(value string, env map[string]string) string {

@@ -50,6 +50,7 @@ type BeforeTarget struct {
 	WorkingDir string
 	Env        []EnvVar
 	DotenvEnv  []EnvVar
+	Dotenv     Dotenv
 }
 
 type resolvedBeforeTarget struct {
@@ -251,6 +252,7 @@ func ResolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, target *models.Target) BeforeTarget {
 	bundle := repo.Bundles()[target.BundleName]
 	env, dotenvEnv := resolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{})
+	dotenvFiles := ResolveDotenvFiles(repo.RepoRoot(), bundle, target)
 	return BeforeTarget{
 		Ref:        target.ID(),
 		ConfigPath: bundleConfigPath(bundle),
@@ -258,6 +260,10 @@ func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 		WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
 		Env:        env,
 		DotenvEnv:  dotenvEnv,
+		Dotenv: Dotenv{
+			Enabled: target.Config.Dotenv.Enabled,
+			Files:   dotenvFiles,
+		},
 	}
 }
 

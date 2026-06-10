@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -515,6 +516,126 @@ func TestUpReusesExistingRunningDependencyContainer(t *testing.T) {
 	assert.Equal(t, "rpm-dev-rabbitmq", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
 }
 
+func TestUpReportsActualPortForReusedDependencyContainer(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers:     map[string]string{"rpm-dev-mongodb": "running"},
+		existingContainerPorts: map[string]map[string]string{"rpm-dev-mongodb": {"27017/tcp": "49152"}},
+	}
+	readiness := &recordingReadinessRunner{}
+	runner := docker.NewCLI(docker.Options{
+		Backend:         backend,
+		PortAllocator:   &fixedPortAllocator{port: 49807},
+		ReadinessRunner: readiness,
+	})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "mongodb",
+			Name:         "mongodb",
+			Image:        "mongo:7",
+			Ports:        []string{"27017"},
+			ReadinessCmd: "true",
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"reuse rpm-dev-mongodb",
+	}, backend.calls)
+	assert.Equal(t, map[string]string{"MONGODB_PORT": "49152"}, startup.Env)
+	require.Len(t, readiness.calls, 1)
+	assert.Equal(t, "49152", readiness.calls[0].env["MONGODB_PORT"])
+}
+
+func TestUpReportsActualPortForRestartedDependencyContainer(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers:     map[string]string{"rpm-dev-mongodb": "exited"},
+		existingContainerPorts: map[string]map[string]string{"rpm-dev-mongodb": {"27017/tcp": "49152"}},
+	}
+	runner := docker.NewCLI(docker.Options{
+		Backend:       backend,
+		PortAllocator: &fixedPortAllocator{port: 49807},
+	})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "mongodb",
+			Name:  "mongodb",
+			Image: "mongo:7",
+			Ports: []string{"27017"},
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"start rpm-dev-mongodb",
+	}, backend.calls)
+	assert.Equal(t, map[string]string{"MONGODB_PORT": "49152"}, startup.Env)
+}
+
+func TestUpRecreatesReusedContainerWhenDeclaredPortNotPublished(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers:     map[string]string{"rpm-dev-mongodb": "running"},
+		existingContainerPorts: map[string]map[string]string{"rpm-dev-mongodb": {}},
+	}
+	runner := docker.NewCLI(docker.Options{
+		Backend:       backend,
+		PortAllocator: &fixedPortAllocator{port: 49807},
+	})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "mongodb",
+			Name:  "mongodb",
+			Image: "mongo:7",
+			Ports: []string{"27017"},
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"reuse rpm-dev-mongodb",
+		"remove-container rpm-dev-mongodb",
+		"run rpm-dev-mongodb",
+	}, backend.calls)
+	require.Len(t, backend.containers, 1)
+	assert.Equal(t, []string{"49807:27017"}, backend.containers[0].Ports)
+	assert.Equal(t, map[string]string{"MONGODB_PORT": "49807"}, startup.Env)
+}
+
+func TestUpRecreatesReusedContainerWhenPinnedHostPortChanged(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers:     map[string]string{"rpm-dev-postgres": "running"},
+		existingContainerPorts: map[string]map[string]string{"rpm-dev-postgres": {"5432/tcp": "49152"}},
+	}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:   "postgres",
+			Name:  "postgres",
+			Image: "postgres:16",
+			Ports: []string{"5432:5432"},
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"reuse rpm-dev-postgres",
+		"remove-container rpm-dev-postgres",
+		"run rpm-dev-postgres",
+	}, backend.calls)
+	assert.Equal(t, map[string]string{"POSTGRES_PORT": "5432"}, startup.Env)
+}
+
 func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T) {
 	backend := &recordingBackend{
 		ensureErrs: map[string]error{"rpm-dev-rabbitmq": assert.AnError},
@@ -637,12 +758,13 @@ func TestFileVolumeNamerPersistsAndPrunesBlueprintEntries(t *testing.T) {
 }
 
 type recordingBackend struct {
-	calls              []string
-	containers         []docker.ContainerSpec
-	missingContainers  map[string]bool
-	missingNetworks    map[string]bool
-	ensureErrs         map[string]error
-	existingContainers map[string]string
+	calls                  []string
+	containers             []docker.ContainerSpec
+	missingContainers      map[string]bool
+	missingNetworks        map[string]bool
+	ensureErrs             map[string]error
+	existingContainers     map[string]string
+	existingContainerPorts map[string]map[string]string
 }
 
 type readinessCall struct {
@@ -683,14 +805,35 @@ func (b *recordingBackend) EnsureContainer(_ context.Context, spec docker.Contai
 	if state := b.existingContainers[spec.Name]; state != "" {
 		if state == "running" {
 			b.calls = append(b.calls, "reuse "+spec.Name)
-			return docker.ContainerState{}, nil
+		} else {
+			b.calls = append(b.calls, "start "+spec.Name)
 		}
-		b.calls = append(b.calls, "start "+spec.Name)
-		return docker.ContainerState{}, nil
+		return docker.ContainerState{Ports: b.reusedPorts(spec)}, nil
 	}
 	b.calls = append(b.calls, "run "+spec.Name)
 	b.containers = append(b.containers, spec)
 	return docker.ContainerState{Created: true}, nil
+}
+
+// reusedPorts reports the host ports the fake existing container is bound to:
+// the configured bindings when set, otherwise bindings matching the spec.
+func (b *recordingBackend) reusedPorts(spec docker.ContainerSpec) map[string]string {
+	if ports, ok := b.existingContainerPorts[spec.Name]; ok {
+		return ports
+	}
+	ports := make(map[string]string, len(spec.Ports))
+	for _, item := range spec.Ports {
+		index := strings.LastIndex(item, ":")
+		host, container := item[:index], item[index+1:]
+		if hostIndex := strings.LastIndex(host, ":"); hostIndex >= 0 {
+			host = host[hostIndex+1:]
+		}
+		if !strings.Contains(container, "/") {
+			container += "/tcp"
+		}
+		ports[container] = host
+	}
+	return ports
 }
 
 func (b *recordingBackend) RemoveContainer(_ context.Context, name string) error {
@@ -698,6 +841,8 @@ func (b *recordingBackend) RemoveContainer(_ context.Context, name string) error
 	if b.missingContainers[name] {
 		return errors.New("no such container")
 	}
+	delete(b.existingContainers, name)
+	delete(b.existingContainerPorts, name)
 	return nil
 }
 

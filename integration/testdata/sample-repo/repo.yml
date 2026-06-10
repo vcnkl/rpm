@@ -18,7 +18,7 @@ env:
     - name: redis
       image: redis:7
       ports:
-        - "6379:6379"
+        - "6379"
     - name: mailhog
       image: mailhog/mailhog:v1.0.1
       ports:

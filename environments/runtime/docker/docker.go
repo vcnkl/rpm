@@ -18,6 +18,7 @@ import (
 	sdknetwork "github.com/docker/go-sdk/network"
 	sdkvolume "github.com/docker/go-sdk/volume"
 	"github.com/moby/moby/api/types/container"
+	mobynetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
@@ -59,6 +60,10 @@ type ContainerSpec struct {
 
 type ContainerState struct {
 	Created bool
+	// Ports maps container ports ("27017/tcp") to the host ports an existing
+	// container is actually bound to. Reused containers keep the bindings they
+	// were created with, which may differ from the ports in the current spec.
+	Ports map[string]string
 }
 
 type CLI struct {
@@ -117,18 +122,23 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			}
 		}
 		for _, name := range containerNames(blueprint, dep) {
-			spec, env, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
+			spec, mappings, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
 				c.cleanupStartedContainers(ctx, startedContainers)
 				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
-			state, err := c.backend.EnsureContainer(ctx, spec)
+			state, err := c.ensureContainer(ctx, spec, mappings)
 			if err != nil {
 				c.cleanupStartedContainers(ctx, startedContainers)
 				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
 			if state.Created {
 				startedContainers = append(startedContainers, name)
+			}
+			env, err := dependencyPortEnv(name, dep, mappings, state)
+			if err != nil {
+				c.cleanupStartedContainers(ctx, startedContainers)
+				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
 			if err = c.runReadiness(ctx, name, dep, env); err != nil {
 				c.cleanupStartedContainers(ctx, startedContainers)
@@ -177,6 +187,74 @@ func (c *CLI) cleanupStartedContainers(ctx context.Context, names []string) {
 	for i := len(names) - 1; i >= 0; i-- {
 		_ = c.backend.RemoveContainer(ctx, names[i])
 	}
+}
+
+// ensureContainer ensures the dependency container exists, replacing an
+// existing container whose port bindings no longer satisfy the declared
+// mappings (the dependency configuration changed since it was created).
+func (c *CLI) ensureContainer(ctx context.Context, spec ContainerSpec, mappings []portMapping) (ContainerState, error) {
+	state, err := c.backend.EnsureContainer(ctx, spec)
+	if err != nil {
+		return ContainerState{}, err
+	}
+	if state.Created || reusablePorts(mappings, state.Ports) {
+		return state, nil
+	}
+	if err = c.backend.RemoveContainer(ctx, spec.Name); err != nil {
+		return ContainerState{}, errors.Wrapf(err, "replace dependency container %s", spec.Name)
+	}
+	return c.backend.EnsureContainer(ctx, spec)
+}
+
+// reusablePorts reports whether an existing container's published ports cover
+// every declared mapping: allocated host ports defer to whatever the container
+// is bound to, while host ports pinned in configuration must match exactly.
+func reusablePorts(mappings []portMapping, actual map[string]string) bool {
+	for _, mapping := range mappings {
+		hostPort, ok := actual[portKey(mapping.Container)]
+		if !ok {
+			return false
+		}
+		if !mapping.Allocated && hostPort != mapping.HostPort {
+			return false
+		}
+	}
+	return true
+}
+
+// dependencyPortEnv resolves the host ports exported as dependency env vars.
+// Created containers bind the ports published by this run; reused containers
+// keep the bindings they were created with, so the ports reported by the
+// backend are the source of truth.
+func dependencyPortEnv(name string, dep envstarlark.Dependency, mappings []portMapping, state ContainerState) (map[string]string, error) {
+	if len(mappings) == 0 {
+		return nil, nil
+	}
+	env := make(map[string]string, len(mappings))
+	multiplePorts := len(mappings) > 1
+	for _, mapping := range mappings {
+		hostPort := mapping.HostPort
+		if !state.Created {
+			actual, ok := state.Ports[portKey(mapping.Container)]
+			if !ok {
+				return nil, fmt.Errorf("existing container %q does not publish container port %q", name, mapping.Container)
+			}
+			hostPort = actual
+		}
+		env[mapping.EnvName(dep.Name, multiplePorts)] = hostPort
+	}
+	return env, nil
+}
+
+// portKey normalizes a container port to the "<port>/<proto>" form used by
+// Docker port bindings, defaulting the protocol to tcp.
+func portKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	port, proto, ok := strings.Cut(value, "/")
+	if !ok || strings.TrimSpace(proto) == "" {
+		return strings.TrimSpace(port) + "/tcp"
+	}
+	return strings.TrimSpace(port) + "/" + strings.TrimSpace(proto)
 }
 
 func (c *CLI) runReadiness(ctx context.Context, container string, dep envstarlark.Dependency, env map[string]string) error {
@@ -301,12 +379,14 @@ func (b sdkBackend) EnsureContainer(ctx context.Context, spec ContainerSpec) (Co
 
 	found, err := cli.FindContainerByName(ctx, spec.Name)
 	if err == nil {
-		if found.State != "running" {
-			if _, err = cli.ContainerStart(ctx, found.ID, client.ContainerStartOptions{}); err != nil {
-				return ContainerState{}, errors.Wrapf(err, "start docker container %s", spec.Name)
-			}
+		state, reused, err := reuseExistingContainer(ctx, cli, found, spec)
+		if err != nil {
+			return ContainerState{}, err
 		}
-		return ContainerState{}, nil
+		if reused {
+			return state, nil
+		}
+		// the stale container was removed; create a fresh one below
 	} else if !isMissingDockerResource(err) {
 		return ContainerState{}, errors.Wrapf(err, "find docker container %s", spec.Name)
 	}
@@ -332,6 +412,54 @@ func (b sdkBackend) EnsureContainer(ctx context.Context, spec ContainerSpec) (Co
 		return ContainerState{}, errors.Wrapf(err, "run docker container %s", spec.Name)
 	}
 	return ContainerState{Created: true}, nil
+}
+
+// reuseExistingContainer reuses a found dependency container, reporting the
+// host ports it is bound to. A stopped container that fails to start (for
+// example its host port has since been taken by another process) is removed so
+// the caller can create a fresh container bound to this run's ports.
+func reuseExistingContainer(ctx context.Context, cli sdkclient.SDKClient, found *container.Summary, spec ContainerSpec) (ContainerState, bool, error) {
+	inspect, err := cli.ContainerInspect(ctx, found.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		return ContainerState{}, false, errors.Wrapf(err, "inspect docker container %s", spec.Name)
+	}
+	if found.State == "running" {
+		return ContainerState{Ports: publishedPorts(inspect.Container)}, true, nil
+	}
+	startErr := error(nil)
+	if _, startErr = cli.ContainerStart(ctx, found.ID, client.ContainerStartOptions{}); startErr == nil {
+		return ContainerState{Ports: publishedPorts(inspect.Container)}, true, nil
+	}
+	if _, removeErr := cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{Force: true}); removeErr != nil {
+		return ContainerState{}, false, errors.Wrapf(startErr, "start docker container %s", spec.Name)
+	}
+	return ContainerState{}, false, nil
+}
+
+// publishedPorts maps the container ports an existing container publishes to
+// their bound host ports. Host config bindings cover stopped containers, while
+// network settings reflect the live bindings of a running container and win
+// when both are present.
+func publishedPorts(inspect container.InspectResponse) map[string]string {
+	ports := make(map[string]string)
+	if inspect.HostConfig != nil {
+		collectHostPorts(ports, inspect.HostConfig.PortBindings)
+	}
+	if inspect.NetworkSettings != nil {
+		collectHostPorts(ports, inspect.NetworkSettings.Ports)
+	}
+	return ports
+}
+
+func collectHostPorts(ports map[string]string, bindings mobynetwork.PortMap) {
+	for port, portBindings := range bindings {
+		for _, binding := range portBindings {
+			if binding.HostPort != "" {
+				ports[portKey(port.String())] = binding.HostPort
+				break
+			}
+		}
+	}
 }
 
 func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {
@@ -422,8 +550,8 @@ func networkName(blueprint string) string {
 	return "rpm-" + sanitize(blueprint)
 }
 
-func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency, volumeBinds []string) (ContainerSpec, map[string]string, error) {
-	ports, env, err := c.publishPorts(ctx, dep)
+func (c *CLI) containerSpec(ctx context.Context, network string, name string, dep envstarlark.Dependency, volumeBinds []string) (ContainerSpec, []portMapping, error) {
+	ports, mappings, err := c.publishPorts(ctx, dep)
 	if err != nil {
 		return ContainerSpec{}, nil, err
 	}
@@ -437,7 +565,7 @@ func (c *CLI) containerSpec(ctx context.Context, network string, name string, de
 	if len(volumeBinds) > 0 {
 		spec.Volumes = append([]string{}, volumeBinds...)
 	}
-	return spec, env, nil
+	return spec, mappings, nil
 }
 
 func (c *CLI) resolveVolumes(ctx context.Context, blueprint string, dep envstarlark.Dependency) ([]string, []string, error) {
@@ -457,13 +585,12 @@ func (c *CLI) resolveVolumes(ctx context.Context, blueprint string, dep envstarl
 	return volumeNames, volumeBinds, nil
 }
 
-func (c *CLI) publishPorts(ctx context.Context, dep envstarlark.Dependency) ([]string, map[string]string, error) {
+func (c *CLI) publishPorts(ctx context.Context, dep envstarlark.Dependency) ([]string, []portMapping, error) {
 	if len(dep.Ports) == 0 {
 		return nil, nil, nil
 	}
 	ports := make([]string, 0, len(dep.Ports))
-	env := make(map[string]string)
-	multiplePorts := len(dep.Ports) > 1
+	mappings := make([]portMapping, 0, len(dep.Ports))
 	for _, item := range dep.Ports {
 		port, err := parsePort(item)
 		if err != nil {
@@ -476,11 +603,12 @@ func (c *CLI) publishPorts(ctx context.Context, dep envstarlark.Dependency) ([]s
 			}
 			port.Host = strconv.Itoa(hostPort)
 			port.HostPort = port.Host
+			port.Allocated = true
 		}
 		ports = append(ports, port.Host+":"+port.Container)
-		env[port.EnvName(dep.Name, multiplePorts)] = port.HostPort
+		mappings = append(mappings, port)
 	}
-	return ports, env, nil
+	return ports, mappings, nil
 }
 
 func containerNames(blueprint string, dep envstarlark.Dependency) []string {
@@ -496,6 +624,9 @@ type portMapping struct {
 	Host      string
 	HostPort  string
 	Container string
+	// Allocated marks host ports picked by the allocator rather than pinned in
+	// configuration; they defer to an existing container's actual binding.
+	Allocated bool
 }
 
 func (p portMapping) EnvName(dependency string, multiplePorts bool) string {

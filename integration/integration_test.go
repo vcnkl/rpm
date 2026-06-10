@@ -3,9 +3,11 @@ package integration
 import (
 	"bytes"
 	"context"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,83 @@ func TestIntegration_EnvUpNonInteractiveBypassesNodeTUI(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+}
+
+func TestIntegration_EnvUpResolvesDependencyPortsInDotenv(t *testing.T) {
+	shouldSkip(t)
+
+	repoDir := copySampleRepo(t)
+	t.Cleanup(removeSampleRepoVolumes)
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoDir, "repo.yml"))
+	var out bytes.Buffer
+	action := actions.NewEnvAction(repo, &out, &out)
+
+	err := action.Up(context.Background(), actions.EnvUpOptions{
+		Blueprint:      "local-stack",
+		NoReload:       true,
+		NonInteractive: true,
+	})
+
+	output := out.String()
+	require.NoError(t, err, output)
+
+	portMatch := regexp.MustCompile(`POSTGRES_PORT=(\d+)`).FindStringSubmatch(output)
+	require.NotNil(t, portMatch, "postgres port missing from output: %s", output)
+	port := portMatch[1]
+
+	assert.Contains(t, output, "BEFORE_POSTGRES_URI=postgresql://localhost:"+port+"/app",
+		"before target must receive the dotenv value with the dependency port substituted: %s", output)
+	assert.Contains(t, output, "POSTGRES_URI=postgresql://localhost:"+port+"/app",
+		"target must receive the dotenv value with the dependency port substituted: %s", output)
+	assert.NotContains(t, output, "localhost:${POSTGRES_PORT}", "placeholder must not leak into processes")
+	assert.NotContains(t, output, "localhost:/app", "port must not resolve to an empty string")
+
+	envData, err := os.ReadFile(filepath.Join(repoDir, "apps", "go-app", ".env"))
+	require.NoError(t, err)
+	assert.Contains(t, string(envData), "POSTGRES_PORT="+port+"\n",
+		"dependency port must be defined in the dotenv file's own scope for apps that reload it themselves")
+	assert.Contains(t, string(envData), "POSTGRES_URI=postgresql://localhost:${POSTGRES_PORT}/app\n",
+		"the user's placeholder value must stay intact")
+}
+
+func copySampleRepo(t *testing.T) string {
+	t.Helper()
+	src, err := filepath.Abs(filepath.Join("testdata", "sample-repo"))
+	require.NoError(t, err)
+	dst := filepath.Join(t.TempDir(), "sample-repo")
+	require.NoError(t, filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	}))
+	return dst
+}
+
+func removeSampleRepoVolumes() {
+	names, err := exec.Command("docker", "volume", "ls", "-q", "--filter", "name=sample-repo-").Output()
+	if err != nil {
+		return
+	}
+	for _, name := range strings.Fields(string(names)) {
+		_ = exec.Command("docker", "volume", "rm", name).Run()
+	}
 }
 
 func TestIntegration_EnvHelp(t *testing.T) {

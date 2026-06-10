@@ -45,13 +45,14 @@ type Dependency struct {
 }
 
 type TargetProcess struct {
-	Ref        string
-	ConfigPath string
-	Command    string
-	WorkingDir string
-	Env        map[string]string
-	DotenvEnv  map[string]string
-	Reload     bool
+	Ref         string
+	ConfigPath  string
+	Command     string
+	WorkingDir  string
+	Env         map[string]string
+	DotenvEnv   map[string]string
+	DotenvFiles []string
+	Reload      bool
 }
 
 type Watch struct {

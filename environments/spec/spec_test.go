@@ -106,6 +106,7 @@ targets:
 		"FROM_LOCAL_DOTENV": "local",
 		"OVERRIDE":          "local-dotenv",
 	}, dotenvValues)
+	assert.Equal(t, []string{filepath.Join(bundleRoot, ".env"), filepath.Join(bundleRoot, ".env.local")}, resolved.Targets[0].Dotenv.Files)
 }
 
 func TestResolveBeforeTargetsReuseTargetContext(t *testing.T) {
@@ -162,6 +163,10 @@ targets:
 	assert.Equal(t, "stack", targetEnv["STACK_VAR"])
 	assert.Equal(t, "dotenv", targetEnv["FROM_DOTENV"])
 	assert.Equal(t, map[string]string{"FROM_DOTENV": "dotenv"}, envMap(resolved.BeforeTargets[0].DotenvEnv))
+	assert.Equal(t, spec.Dotenv{
+		Enabled: true,
+		Files:   []string{filepath.Join(bundleRoot, ".env")},
+	}, resolved.BeforeTargets[0].Dotenv)
 	assert.Equal(t, []spec.RuntimeUnit{
 		{Id: "api:migrate", Kind: "before"},
 		{Id: "api:serve", Kind: "target"},

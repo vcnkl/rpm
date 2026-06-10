@@ -20,7 +20,7 @@ targets:
       working_dir: local
 
   - name: prepare
-    cmd: echo "BEFORE_TARGET=$BUNDLE_ROOT"
+    cmd: echo "BEFORE_TARGET=$BUNDLE_ROOT BEFORE_POSTGRES_URI=$POSTGRES_URI"
     config:
       working_dir: local
 
@@ -37,7 +37,7 @@ targets:
   - name: echo-123
     deps:
       - ":app_build"
-    cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR"
+    cmd: echo "REPO_ROOT=$REPO_ROOT BUNDLE_ROOT=$BUNDLE_ROOT GO_VAR=$GO_VAR APP_PORT=$APP_PORT BUILD_MODE=$BUILD_MODE GLOBAL_VAR=$GLOBAL_VAR POSTGRES_PORT=$POSTGRES_PORT POSTGRES_URI=$POSTGRES_URI"
     config:
       dotenv:
         enabled: true
