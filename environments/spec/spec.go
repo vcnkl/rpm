@@ -97,6 +97,28 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 
 	bundleSeen := make(map[string]bool)
 	dependencySeen := make(map[string]bool)
+	dependencies := repo.EnvironmentDependencies()
+	excludedDependencies := make(map[string]bool)
+	if blueprint.DependencyPolicy.Enabled {
+		for _, ref := range blueprint.DependencyPolicy.Exclude {
+			excludedDependencies[ref] = true
+		}
+	}
+	addDependency := func(ref string, required bool) error {
+		if dependencySeen[ref] {
+			return nil
+		}
+		dep, ok := dependencies[ref]
+		if !ok {
+			if required {
+				return errors.Errorf("unknown dependency ref %q", ref)
+			}
+			return nil
+		}
+		resolved.Dependencies = append(resolved.Dependencies, dependency(dep))
+		dependencySeen[ref] = true
+		return nil
+	}
 	addBundle := func(bundle *models.Bundle) {
 		if bundleSeen[bundle.Name] {
 			return
@@ -108,15 +130,17 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		})
 		bundleSeen[bundle.Name] = true
 		for _, ref := range bundle.Dependencies {
-			if dependencySeen[ref] {
+			if excludedDependencies[ref] {
 				continue
 			}
-			dep, ok := repo.EnvironmentDependencies()[ref]
-			if !ok {
-				continue
+			_ = addDependency(ref, false)
+		}
+	}
+	if blueprint.DependencyPolicy.Enabled {
+		for _, ref := range blueprint.DependencyPolicy.Include {
+			if err := addDependency(ref, true); err != nil {
+				return nil, err
 			}
-			resolved.Dependencies = append(resolved.Dependencies, dependency(dep))
-			dependencySeen[ref] = true
 		}
 	}
 

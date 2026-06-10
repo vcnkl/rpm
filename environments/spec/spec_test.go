@@ -334,6 +334,68 @@ env:
 	assert.Equal(t, []string{"postgres", "redis"}, dependencyRefs(resolved.Dependencies))
 }
 
+func TestResolveIncludesExplicitDependencyPolicyRefs(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+env:
+  deps:
+    - name: mongodb
+      image: mongo:8.0.23-noble
+      ports:
+        - MONGODB_PORT=27017
+    - name: postgres
+      image: postgres:16
+      env:
+        POSTGRES_PASSWORD: example
+      ports:
+        - POSTGRES_PORT=5432
+      volumes:
+        - /var/lib/postgresql/data
+      readiness-cmd: pg_isready
+    - name: rabbitmq
+      image: rabbitmq:3-management
+      ports:
+        - RABBITMQ_PORT=5672
+    - name: redis
+      image: redis:7
+      ports:
+        - REDIS_PORT=6379
+`), 0644))
+	writeBundle(t, repoRoot, "api", "api")
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name: "local",
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve", Env: map[string]string{}},
+		},
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: true,
+			Include: []string{"mongodb", "postgres", "rabbitmq", "redis"},
+			Exclude: []string{},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	require.Len(t, resolved.Dependencies, 4)
+	assert.Equal(t, []string{"mongodb", "postgres", "rabbitmq", "redis"}, dependencyRefs(resolved.Dependencies))
+	assert.Equal(t, "mongo:8.0.23-noble", resolved.Dependencies[0].Image)
+	assert.Equal(t, []string{"MONGODB_PORT=27017"}, resolved.Dependencies[0].Ports)
+	assert.Equal(t, "postgres:16", resolved.Dependencies[1].Image)
+	assert.Equal(t, map[string]string{"POSTGRES_PASSWORD": "example"}, envMap(resolved.Dependencies[1].Env))
+	assert.Equal(t, []string{"POSTGRES_PORT=5432"}, resolved.Dependencies[1].Ports)
+	assert.Equal(t, []string{"/var/lib/postgresql/data"}, resolved.Dependencies[1].Volumes)
+	assert.Equal(t, "pg_isready", resolved.Dependencies[1].ReadinessCmd)
+	assert.Equal(t, "rabbitmq:3-management", resolved.Dependencies[2].Image)
+	assert.Equal(t, []string{"RABBITMQ_PORT=5672"}, resolved.Dependencies[2].Ports)
+	assert.Equal(t, "redis:7", resolved.Dependencies[3].Image)
+	assert.Equal(t, []string{"REDIS_PORT=6379"}, resolved.Dependencies[3].Ports)
+}
+
 func TestResolveUsesBundleTargetReloadConfig(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
