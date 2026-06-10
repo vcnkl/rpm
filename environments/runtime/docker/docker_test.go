@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	"github.com/vcnkl/rpm/environments/runtime/docker"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
@@ -294,9 +295,17 @@ func TestUpReturnsDependencyReadinessFailure(t *testing.T) {
 	_, err := runner.Up(context.Background(), "local-stack", plan)
 
 	require.ErrorIs(t, err, assert.AnError)
+	var depErr envruntime.DependencyError
+	require.True(t, errors.As(err, &depErr))
+	assert.Equal(t, "postgres", depErr.Ref)
 	assert.Contains(t, err.Error(), "postgres readiness check failed")
 	require.Len(t, readiness.calls, 1)
 	assert.Equal(t, "rpm-local-stack-postgres", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
+	assert.Equal(t, []string{
+		"network rpm-local-stack",
+		"run rpm-local-stack-postgres",
+		"remove-container rpm-local-stack-postgres",
+	}, backend.calls)
 }
 
 func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {
@@ -318,27 +327,137 @@ func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {
 
 func TestUpBuildsOneDockerContainerPerDependency(t *testing.T) {
 	backend := &recordingBackend{}
-	runner := docker.NewCLI(docker.Options{Backend: backend})
+	runner := docker.NewCLI(docker.Options{
+		Backend: backend,
+		PortAllocator: &fixedPortAllocator{
+			port: 49152,
+		},
+		VolumeNamer: fixedVolumeNamer{
+			names: map[string]string{"dev|postgres|/var/lib/postgresql/data": "sample-repo-postgres-dev-123456"},
+		},
+	})
 	plan := &envstarlark.RuntimePlan{
-		Dependencies: []envstarlark.Dependency{{
-			Ref:   "redis",
-			Name:  "redis",
-			Image: "redis:7",
-		}},
-		Targets: []envstarlark.TargetProcess{
-			{Ref: "api:serve"},
-			{Ref: "api:worker"},
-			{Ref: "web:serve"},
+		Dependencies: []envstarlark.Dependency{
+			{
+				Ref:   "mongodb",
+				Name:  "mongodb",
+				Image: "mongo:8.0.23-noble",
+				Ports: []string{"MONGODB_PORT=27017"},
+			},
+			{
+				Ref:     "postgres",
+				Name:    "postgres",
+				Image:   "postgis/postgis:17-3.5",
+				Env:     map[string]string{"POSTGRES_PASSWORD": "example"},
+				Ports:   []string{"POSTGRES_PORT=5432"},
+				Volumes: []string{"/var/lib/postgresql/data"},
+			},
+			{
+				Ref:   "rabbitmq",
+				Name:  "rabbitmq",
+				Image: "rabbitmq:4.1.3",
+				Ports: []string{"RABBITMQ_PORT=5672"},
+			},
+			{
+				Ref:   "redis",
+				Name:  "redis",
+				Image: "redis:7",
+				Ports: []string{"REDIS_PORT=6379"},
+			},
 		},
 	}
 
-	startup, err := runner.Up(context.Background(), "local-stack", plan)
+	startup, err := runner.Up(context.Background(), "dev", plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []docker.ContainerSpec{
-		{Name: "rpm-local-stack-redis", Image: "redis:7", Network: "rpm-local-stack"},
+		{
+			Name:    "rpm-dev-mongodb",
+			Image:   "mongo:8.0.23-noble",
+			Network: "rpm-dev",
+			Ports:   []string{"49152:27017"},
+		},
+		{
+			Name:    "rpm-dev-postgres",
+			Image:   "postgis/postgis:17-3.5",
+			Network: "rpm-dev",
+			Env:     map[string]string{"POSTGRES_PASSWORD": "example"},
+			Ports:   []string{"49153:5432"},
+			Volumes: []string{"sample-repo-postgres-dev-123456:/var/lib/postgresql/data"},
+		},
+		{
+			Name:    "rpm-dev-rabbitmq",
+			Image:   "rabbitmq:4.1.3",
+			Network: "rpm-dev",
+			Ports:   []string{"49154:5672"},
+		},
+		{
+			Name:    "rpm-dev-redis",
+			Image:   "redis:7",
+			Network: "rpm-dev",
+			Ports:   []string{"49155:6379"},
+		},
 	}, backend.containers)
-	assert.Empty(t, startup.Env)
+	assert.Equal(t, map[string]string{
+		"MONGODB_PORT":  "49152",
+		"POSTGRES_PORT": "49153",
+		"RABBITMQ_PORT": "49154",
+		"REDIS_PORT":    "49155",
+	}, startup.Env)
+}
+
+func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T) {
+	backend := &recordingBackend{
+		runErrs: map[string]error{"rpm-dev-rabbitmq": assert.AnError},
+	}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{
+			{Ref: "mongodb", Name: "mongodb", Image: "mongo:8.0.23-noble"},
+			{Ref: "postgres", Name: "postgres", Image: "postgis/postgis:17-3.5"},
+			{Ref: "rabbitmq", Name: "rabbitmq", Image: "rabbitmq:4.1.3"},
+			{Ref: "redis", Name: "redis", Image: "redis:7"},
+		},
+	}
+
+	_, err := runner.Up(context.Background(), "dev", plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	var depErr envruntime.DependencyError
+	require.True(t, errors.As(err, &depErr))
+	assert.Equal(t, "rabbitmq", depErr.Ref)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"run rpm-dev-mongodb",
+		"run rpm-dev-postgres",
+		"run rpm-dev-rabbitmq",
+		"remove-container rpm-dev-postgres",
+		"remove-container rpm-dev-mongodb",
+	}, backend.calls)
+}
+
+func TestUpDoesNotRemovePreexistingConflictContainer(t *testing.T) {
+	backend := &recordingBackend{
+		runErrs: map[string]error{"rpm-dev-mongodb": assert.AnError},
+	}
+	runner := docker.NewCLI(docker.Options{Backend: backend})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{
+			{Ref: "mongodb", Name: "mongodb", Image: "mongo:8.0.23-noble"},
+			{Ref: "postgres", Name: "postgres", Image: "postgis/postgis:17-3.5"},
+		},
+	}
+
+	_, err := runner.Up(context.Background(), "dev", plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	var depErr envruntime.DependencyError
+	require.True(t, errors.As(err, &depErr))
+	assert.Equal(t, "mongodb", depErr.Ref)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"run rpm-dev-mongodb",
+	}, backend.calls)
 }
 
 func TestDownRemovesDependencyContainersAndNetwork(t *testing.T) {
@@ -408,6 +527,7 @@ type recordingBackend struct {
 	containers        []docker.ContainerSpec
 	missingContainers map[string]bool
 	missingNetworks   map[string]bool
+	runErrs           map[string]error
 }
 
 type readinessCall struct {
@@ -443,6 +563,9 @@ func (b *recordingBackend) EnsureVolume(_ context.Context, name string) error {
 func (b *recordingBackend) RunContainer(_ context.Context, spec docker.ContainerSpec) error {
 	b.calls = append(b.calls, "run "+spec.Name)
 	b.containers = append(b.containers, spec)
+	if b.runErrs[spec.Name] != nil {
+		return b.runErrs[spec.Name]
+	}
 	return nil
 }
 

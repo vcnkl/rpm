@@ -358,6 +358,60 @@ func TestUpDependencyStartupFailurePreventsBeforeTargets(t *testing.T) {
 	assert.Empty(t, processes.startedRefs())
 }
 
+func TestUpScopedDependencyStartupFailureMarksOnlyFailingDependency(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	events := &eventRecorder{}
+	deps := &fakeDependencyRunner{upErr: envruntime.NewDependencyError("mongodb", assert.AnError)}
+	plan := testPlan()
+	plan.Dependencies = []envstarlark.Dependency{
+		{Ref: "mongodb", Name: "mongodb", Image: "mongo:8.0.23-noble"},
+		{Ref: "postgres", Name: "postgres", Image: "postgres:16"},
+		{Ref: "rabbitmq", Name: "rabbitmq", Image: "rabbitmq:4.1.3"},
+		{Ref: "redis", Name: "redis", Image: "redis:7"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Empty(t, processes.startedRefs())
+	assert.Equal(t, []envruntime.Event{{
+		Type:  envruntime.EventDependencyFailed,
+		Ref:   "mongodb",
+		Error: assert.AnError.Error(),
+	}}, events.byType(envruntime.EventDependencyFailed))
+}
+
+func TestUpUnscopedDependencyStartupFailureMarksAggregateDependency(t *testing.T) {
+	events := &eventRecorder{}
+	deps := &fakeDependencyRunner{upErr: assert.AnError}
+	plan := testPlan()
+	plan.Dependencies = []envstarlark.Dependency{
+		{Ref: "mongodb", Name: "mongodb", Image: "mongo:8.0.23-noble"},
+		{Ref: "postgres", Name: "postgres", Image: "postgres:16"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    &fakeProcessRunner{},
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []envruntime.Event{{
+		Type:  envruntime.EventDependencyFailed,
+		Ref:   "dependencies",
+		Error: assert.AnError.Error(),
+	}}, events.byType(envruntime.EventDependencyFailed))
+}
+
 func TestNoDepsStillRunsBeforeTargetsBeforeTargets(t *testing.T) {
 	order := []string{}
 	processes := &fakeProcessRunner{order: &order}
@@ -689,6 +743,18 @@ func (r *eventRecorder) types() []string {
 		types = append(types, event.Type)
 	}
 	return types
+}
+
+func (r *eventRecorder) byType(eventType string) []envruntime.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	events := []envruntime.Event{}
+	for _, event := range r.events {
+		if event.Type == eventType {
+			events = append(events, event)
+		}
+	}
+	return events
 }
 
 func (r *eventRecorder) outputLines(ref string, stream string) []string {

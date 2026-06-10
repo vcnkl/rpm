@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pkg/errors"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
@@ -37,6 +38,26 @@ type DependencyRunner interface {
 
 type DependencyStartup struct {
 	Env map[string]string
+}
+
+type DependencyError struct {
+	Ref string
+	Err error
+}
+
+func NewDependencyError(ref string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return DependencyError{Ref: ref, Err: err}
+}
+
+func (e DependencyError) Error() string {
+	return e.Err.Error()
+}
+
+func (e DependencyError) Unwrap() error {
+	return e.Err
 }
 
 type ReloadWatcher interface {
@@ -622,13 +643,12 @@ func (r *Runner) declareUnits(plan *envstarlark.RuntimePlan) {
 }
 
 func (r *Runner) emitDependencyFailure(plan *envstarlark.RuntimePlan, err error) {
-	if len(plan.Dependencies) == 0 {
-		r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: "dependencies", Error: err.Error()})
+	var depErr DependencyError
+	if errors.As(err, &depErr) && depErr.Ref != "" {
+		r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: depErr.Ref, Error: err.Error()})
 		return
 	}
-	for _, dep := range plan.Dependencies {
-		r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: dep.Ref, Error: err.Error()})
-	}
+	r.opts.EventSink.Emit(Event{Type: EventDependencyFailed, Ref: "dependencies", Error: err.Error()})
 }
 
 func (r *Runner) waitForQuitAfterError(ctx context.Context, plan *envstarlark.RuntimePlan, err error, startedDeps bool) error {

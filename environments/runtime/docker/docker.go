@@ -94,26 +94,33 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		return envruntime.DependencyStartup{}, err
 	}
 	startup := envruntime.DependencyStartup{Env: make(map[string]string)}
+	startedContainers := []string{}
 	for _, dep := range plan.Dependencies {
 		volumeNames, volumeBinds, err := c.resolveVolumes(ctx, blueprint, dep)
 		if err != nil {
-			return envruntime.DependencyStartup{}, err
+			c.cleanupStartedContainers(ctx, startedContainers)
+			return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 		}
 		for _, volume := range volumeNames {
 			if err = c.backend.EnsureVolume(ctx, volume); err != nil {
-				return envruntime.DependencyStartup{}, err
+				c.cleanupStartedContainers(ctx, startedContainers)
+				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
 		}
 		for _, name := range containerNames(blueprint, dep) {
 			spec, env, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
-				return envruntime.DependencyStartup{}, err
+				c.cleanupStartedContainers(ctx, startedContainers)
+				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
 			if err = c.backend.RunContainer(ctx, spec); err != nil {
-				return envruntime.DependencyStartup{}, err
+				c.cleanupStartedContainers(ctx, startedContainers)
+				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
+			startedContainers = append(startedContainers, name)
 			if err = c.runReadiness(ctx, name, dep, env); err != nil {
-				return envruntime.DependencyStartup{}, err
+				c.cleanupStartedContainers(ctx, startedContainers)
+				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
 			for key, value := range env {
 				startup.Env[key] = value
@@ -121,6 +128,12 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		}
 	}
 	return startup, nil
+}
+
+func (c *CLI) cleanupStartedContainers(ctx context.Context, names []string) {
+	for i := len(names) - 1; i >= 0; i-- {
+		_ = c.backend.RemoveContainer(ctx, names[i])
+	}
 }
 
 func (c *CLI) runReadiness(ctx context.Context, container string, dep envstarlark.Dependency, env map[string]string) error {
@@ -277,7 +290,7 @@ func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true}); err != nil {
+	if _, err = cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return errors.Wrapf(err, "remove docker container %s", name)
 	}
 	return nil
