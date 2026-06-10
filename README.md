@@ -126,7 +126,12 @@ rpm env down <blueprint>
 rpm env prune <blueprint>
 ```
 
-Environment blueprints are committed directories stored under `.rpm/envs/<name>/`. The editable YAML lives at `.rpm/envs/<name>/config.yml`, and generated Starlark lives at `.rpm/envs/<name>/runtime.gen.star` so the selected refs and execution order can be reviewed and committed. Generated Starlark uses repo-relative config paths such as `repo.yml` and `apps/api/rpm.yml`; it does not embed target command text or loaded dotenv values. Blueprints select explicit target refs, and RPM derives dependency refs from selected bundles; RPM does not infer dev targets from suffixes.
+Blueprint files:
+- Edit `.rpm/envs/<name>/config.yml`.
+- Commit `.rpm/envs/<name>/runtime.gen.star`.
+- Generated Starlark stores refs, order and repo-relative config paths.
+- Commands and dotenv values are resolved at runtime.
+- Targets are explicit refs. RPM does not infer dev targets from suffixes.
 
 ```yaml
 version: 1
@@ -153,9 +158,39 @@ variables:
   LOG_LEVEL: debug
 ```
 
-Use `rpm env create --non-interactive <name> --target bundle:target --before bundle:migrate` to create a blueprint from flags, or run `rpm env create` for a prompt-based flow. `before` entries run after dependencies and before target processes; they reference existing `rpm.yml` targets. Selected before targets with `config.index` run first by ascending index, ties are sorted by target ref, and selected before targets without `config.index` run afterward by target ref. Bundle `env.deps` are mandatory for selected target and before-target bundles; generated blueprints record the sorted required dependency refs and clear dependency excludes. Bare dependency ports such as `"5432"` are published on dynamically selected ephemeral host ports; explicit mappings such as `"5432:5432"` are preserved. For every started dependency port, `rpm env up` injects the resolved host port into before and target process environments after configured `.env` values so the dynamic value wins on name conflicts. A dependency with one port uses `<DEPENDENCY_NAME>_PORT`, such as `POSTGRES_PORT`; a dependency with multiple ports uses `<DEPENDENCY_NAME>_PORT_<CONTAINER_PORT>`, such as `MAILHOG_PORT_1025`. Custom env names can be declared by prefixing a port with `NAME=`, such as `"MONGO_PORT=27017"`. Dependencies can define `readiness-cmd`; when present, `rpm env up` runs it after the container starts and before any `before` targets, with `DOCKER_CONTAINER_NAME` and the resolved dependency port env vars available. `--no-deps` skips dependency containers and therefore does not inject dependency port env vars or run readiness commands. Docker volume names are generated and cached in `.rpm/cache/env-volumes.json`; `rpm env prune <blueprint>` resets cached volume names for one blueprint. `live_reload.enabled` defaults to `true`, `live_reload.debounce` defaults to `100ms`, and target reload defaults come from each bundle target's `config.reload`; `targets[].reload` is an explicit override that is still gated by the blueprint-level live reload switch.
+Create a blueprint:
+```bash
+rpm env create --non-interactive local --target api:serve --before api:migrate
+rpm env create
+```
 
-`rpm env render <blueprint>` validates the blueprint and writes deterministic Starlark under `.rpm/envs/<blueprint>/runtime.gen.star`. `rpm env create` and `rpm env edit` also update this generated Starlark after writing `.rpm/envs/<blueprint>/config.yml`. `rpm env up <blueprint>` reads the generated Starlark file, resolves current target commands, working directories, dotenv files, watch roots, and dependency definitions from the referenced `repo.yml` and `rpm.yml` files, starts dependency containers, runs `before` targets, starts target processes, and restarts affected target processes when watched files change. Dotenv resolution follows each target's current config: `.env` is loaded by default when dotenv is enabled, and `config.dotenv.files` adds target-specific file paths/globs. If `runtime.gen.star` is missing, run `rpm env render <blueprint>` before `rpm env up`. In interactive mode it opens the centralized Ink TUI from `environments/tui`; in `--non-interactive` mode it streams newline-delimited JSON runtime events.
+Runtime rules:
+- `before` refs run after dependencies and before targets.
+- `config.index` orders `before` refs first, then unordered refs sort by ref.
+- Selected bundles must declare required `env.deps`.
+- Bare ports like `"5432"` get ephemeral host ports.
+- Mapped ports like `"5432:5432"` stay fixed.
+- Injected port env wins over `.env` values.
+- Port env names: `POSTGRES_PORT`, `MAILHOG_PORT_1025` or custom `"MONGO_PORT=27017"`.
+- `readiness-cmd` runs after container start with `DOCKER_CONTAINER_NAME`.
+- `--no-deps` skips containers, port env injection and readiness commands.
+- Volume names are cached in `.rpm/cache/env-volumes.json`; reset with `rpm env prune <blueprint>`.
+- Live reload defaults: `enabled: true`, `debounce: 100ms`.
+
+Render and run:
+```bash
+rpm env render local
+rpm env up local
+rpm env up local --non-interactive
+```
+
+Notes:
+- `create`, `edit` and `render` update `runtime.gen.star`.
+- `up` reads `runtime.gen.star`, resolves current repo config, starts deps, runs `before` refs then starts targets.
+- Watched file changes restart affected targets.
+- Dotenv uses target config: `.env` by default plus `config.dotenv.files`.
+- If `runtime.gen.star` is missing, run `rpm env render <blueprint>`.
+- Interactive mode opens the Ink TUI; `--non-interactive` streams JSON events.
 
 `rpm env down <blueprint>` removes dependency containers and the environment network for that blueprint. It does not stop arbitrary external processes.
 
