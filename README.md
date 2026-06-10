@@ -19,7 +19,7 @@ wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
 
 ## Configuration
 
-### repo.yml (Repository Root)
+### Global (repo.yml)
 
 ```yaml
 project:
@@ -52,7 +52,7 @@ ignore:
   - 'path/to/ignored/bundle/*'
 ```
 
-### rpm.yml (Bundle Configuration)
+### Bundles (rpm.yml)
 
 ```yaml
 name: my-service              # Bundle name (used in target IDs)
@@ -95,11 +95,9 @@ targets:
     cmd: go run .
 ```
 
-## Commands
+## Usage
 
-**Important**: Flags must come BEFORE target names (urfave/cli requirement).
-
-### build
+### Build
 ```bash
 rpm build [targets...]              # Build specific targets
 rpm build                           # Build all *_build targets
@@ -108,30 +106,43 @@ rpm build --dry-run core            # Show what would be built
 rpm build -j 4 core                 # Limit parallel jobs
 ```
 
-### test
+### Test
 ```bash
 rpm test [targets...]               # Run specific test targets
 rpm test                            # Run all *_test targets
 ```
 
-### env
+### Run target
+```bash
+rpm run <target>                    # Run any target by exact ID
+rpm run core:migrate                # Example: run migration target
+```
+
+### Init
+```bash
+rpm init                            # Initialize .rpm directory, run `init` scripts and validate config
+```
+
+### Show dependency graph
+```bash
+rpm graph [target]                  # Show dependency graph
+```
+
+### Env
 ```bash
 rpm env create [blueprint] --target bundle:target
-rpm env create [blueprint] --target bundle:target --before bundle:migrate
-rpm env edit <blueprint> --add-target bundle:target --add-before bundle:migrate
+rpm env create [blueprint] --target bundle:target --before bundle:target
+rpm env edit <blueprint> --add-target bundle:target --add-before bundle:target
 rpm env validate <blueprint>
 rpm env render <blueprint> [--out path]
 rpm env up <blueprint> [--non-interactive] [--no-reload] [--no-deps]
-rpm env down <blueprint>
+rpm env down <blueprint>  # or enter `q` to quit interactive session
 rpm env prune <blueprint>
 ```
 
 Blueprint files:
-- Edit `.rpm/envs/<name>/config.yml`.
-- Commit `.rpm/envs/<name>/runtime.gen.star`.
-- Generated Starlark stores refs, order and repo-relative config paths.
-- Commands and dotenv values are resolved at runtime.
-- Targets are explicit refs. RPM does not infer dev targets from suffixes.
+- `.rpm/envs/<name>/config.yml`.
+- `.rpm/envs/<name>/runtime.gen.star`.
 
 ```yaml
 version: 1
@@ -156,58 +167,6 @@ dependencies:
   exclude: []
 variables:
   LOG_LEVEL: debug
-```
-
-Create a blueprint:
-```bash
-rpm env create --non-interactive local --target api:serve --before api:migrate
-rpm env create
-```
-
-Runtime rules:
-- `before` refs run after dependencies and before targets.
-- `config.index` orders `before` refs first, then unordered refs sort by ref.
-- Selected bundles must declare required `env.deps`.
-- Bare ports like `"5432"` get ephemeral host ports.
-- Mapped ports like `"5432:5432"` stay fixed.
-- Injected port env wins over `.env` values.
-- Port env names: `POSTGRES_PORT`, `MAILHOG_PORT_1025` or custom `"MONGO_PORT=27017"`.
-- `readiness-cmd` runs after container start with `DOCKER_CONTAINER_NAME`.
-- `--no-deps` skips containers, port env injection and readiness commands.
-- Volume names are cached in `.rpm/cache/env-volumes.json`; reset with `rpm env prune <blueprint>`.
-- Live reload defaults: `enabled: true`, `debounce: 100ms`.
-
-Render and run:
-```bash
-rpm env render local
-rpm env up local
-rpm env up local --non-interactive
-```
-
-Notes:
-- `create`, `edit` and `render` update `runtime.gen.star`.
-- `up` reads `runtime.gen.star`, resolves current repo config, starts deps, runs `before` refs then starts targets.
-- Watched file changes restart affected targets.
-- Dotenv uses target config: `.env` by default plus `config.dotenv.files`.
-- If `runtime.gen.star` is missing, run `rpm env render <blueprint>`.
-- Interactive mode opens the Ink TUI; `--non-interactive` streams JSON events.
-
-`rpm env down <blueprint>` removes dependency containers and the environment network for that blueprint. It does not stop arbitrary external processes.
-
-### run
-```bash
-rpm run <target>                    # Run any target by exact ID
-rpm run core:migrate                # Example: run migration target
-```
-
-### init
-```bash
-rpm init                            # Initialize .rpm directory and validate config
-```
-
-### graph
-```bash
-rpm graph [target]                  # Show dependency graph
 ```
 
 ## Global Flags
