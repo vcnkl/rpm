@@ -27,7 +27,7 @@ import (
 type Backend interface {
 	EnsureNetwork(ctx context.Context, name string) error
 	EnsureVolume(ctx context.Context, name string) error
-	RunContainer(ctx context.Context, spec ContainerSpec) error
+	EnsureContainer(ctx context.Context, spec ContainerSpec) (ContainerState, error)
 	RemoveContainer(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
 }
@@ -55,6 +55,10 @@ type ContainerSpec struct {
 	Env     map[string]string
 	Ports   []string
 	Volumes []string
+}
+
+type ContainerState struct {
+	Created bool
 }
 
 type CLI struct {
@@ -118,11 +122,14 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 				c.cleanupStartedContainers(ctx, startedContainers)
 				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
-			if err = c.backend.RunContainer(ctx, spec); err != nil {
+			state, err := c.backend.EnsureContainer(ctx, spec)
+			if err != nil {
 				c.cleanupStartedContainers(ctx, startedContainers)
 				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
 			}
-			startedContainers = append(startedContainers, name)
+			if state.Created {
+				startedContainers = append(startedContainers, name)
+			}
 			if err = c.runReadiness(ctx, name, dep, env); err != nil {
 				c.cleanupStartedContainers(ctx, startedContainers)
 				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
@@ -285,12 +292,24 @@ func (b sdkBackend) EnsureVolume(ctx context.Context, name string) error {
 	return nil
 }
 
-func (b sdkBackend) RunContainer(ctx context.Context, spec ContainerSpec) error {
+func (b sdkBackend) EnsureContainer(ctx context.Context, spec ContainerSpec) (ContainerState, error) {
 	cli, err := b.client(ctx)
 	if err != nil {
-		return err
+		return ContainerState{}, err
 	}
 	defer cli.Close()
+
+	found, err := cli.FindContainerByName(ctx, spec.Name)
+	if err == nil {
+		if found.State != "running" {
+			if _, err = cli.ContainerStart(ctx, found.ID, client.ContainerStartOptions{}); err != nil {
+				return ContainerState{}, errors.Wrapf(err, "start docker container %s", spec.Name)
+			}
+		}
+		return ContainerState{}, nil
+	} else if !isMissingDockerResource(err) {
+		return ContainerState{}, errors.Wrapf(err, "find docker container %s", spec.Name)
+	}
 
 	opts := []sdkcontainer.ContainerCustomizer{
 		sdkcontainer.WithClient(cli),
@@ -310,9 +329,9 @@ func (b sdkBackend) RunContainer(ctx context.Context, spec ContainerSpec) error 
 		}))
 	}
 	if _, err = sdkcontainer.Run(ctx, opts...); err != nil {
-		return errors.Wrapf(err, "run docker container %s", spec.Name)
+		return ContainerState{}, errors.Wrapf(err, "run docker container %s", spec.Name)
 	}
-	return nil
+	return ContainerState{Created: true}, nil
 }
 
 func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {

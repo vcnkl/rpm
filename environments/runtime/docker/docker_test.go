@@ -457,9 +457,67 @@ func TestUpRejectsConflictingDuplicateDependencyContainersBeforeStartup(t *testi
 	assert.Empty(t, backend.containers)
 }
 
+func TestUpStartsExistingStoppedDependencyContainer(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers: map[string]string{"rpm-dev-rabbitmq": "exited"},
+	}
+	readiness := &recordingReadinessRunner{}
+	runner := docker.NewCLI(docker.Options{Backend: backend, ReadinessRunner: readiness})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "rabbitmq",
+			Name:         "rabbitmq",
+			Image:        "rabbitmq:4.1.3",
+			Ports:        []string{"5672:5672"},
+			ReadinessCmd: "true",
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"start rpm-dev-rabbitmq",
+	}, backend.calls)
+	assert.Empty(t, backend.containers)
+	assert.Equal(t, map[string]string{"RABBITMQ_PORT": "5672"}, startup.Env)
+	require.Len(t, readiness.calls, 1)
+	assert.Equal(t, "rpm-dev-rabbitmq", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
+}
+
+func TestUpReusesExistingRunningDependencyContainer(t *testing.T) {
+	backend := &recordingBackend{
+		existingContainers: map[string]string{"rpm-dev-rabbitmq": "running"},
+	}
+	readiness := &recordingReadinessRunner{}
+	runner := docker.NewCLI(docker.Options{Backend: backend, ReadinessRunner: readiness})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "rabbitmq",
+			Name:         "rabbitmq",
+			Image:        "rabbitmq:4.1.3",
+			Ports:        []string{"5672:5672"},
+			ReadinessCmd: "true",
+		}},
+	}
+
+	startup, err := runner.Up(context.Background(), "dev", plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"network rpm-dev",
+		"reuse rpm-dev-rabbitmq",
+	}, backend.calls)
+	assert.Empty(t, backend.containers)
+	assert.Equal(t, map[string]string{"RABBITMQ_PORT": "5672"}, startup.Env)
+	require.Len(t, readiness.calls, 1)
+	assert.Equal(t, "rpm-dev-rabbitmq", readiness.calls[0].env["DOCKER_CONTAINER_NAME"])
+}
+
 func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T) {
 	backend := &recordingBackend{
-		runErrs: map[string]error{"rpm-dev-rabbitmq": assert.AnError},
+		ensureErrs: map[string]error{"rpm-dev-rabbitmq": assert.AnError},
 	}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
@@ -481,21 +539,23 @@ func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T
 		"network rpm-dev",
 		"run rpm-dev-mongodb",
 		"run rpm-dev-postgres",
-		"run rpm-dev-rabbitmq",
+		"ensure rpm-dev-rabbitmq",
 		"remove-container rpm-dev-postgres",
 		"remove-container rpm-dev-mongodb",
 	}, backend.calls)
 }
 
-func TestUpDoesNotRemovePreexistingConflictContainer(t *testing.T) {
+func TestUpDoesNotRemoveReusedContainerWhenLaterDependencyFails(t *testing.T) {
 	backend := &recordingBackend{
-		runErrs: map[string]error{"rpm-dev-mongodb": assert.AnError},
+		existingContainers: map[string]string{"rpm-dev-rabbitmq": "running"},
+		ensureErrs:         map[string]error{"rpm-dev-redis": assert.AnError},
 	}
 	runner := docker.NewCLI(docker.Options{Backend: backend})
 	plan := &envstarlark.RuntimePlan{
 		Dependencies: []envstarlark.Dependency{
-			{Ref: "mongodb", Name: "mongodb", Image: "mongo:8.0.23-noble"},
 			{Ref: "postgres", Name: "postgres", Image: "postgis/postgis:17-3.5"},
+			{Ref: "rabbitmq", Name: "rabbitmq", Image: "rabbitmq:4.1.3"},
+			{Ref: "redis", Name: "redis", Image: "redis:7"},
 		},
 	}
 
@@ -504,10 +564,13 @@ func TestUpDoesNotRemovePreexistingConflictContainer(t *testing.T) {
 	require.ErrorIs(t, err, assert.AnError)
 	var depErr envruntime.DependencyError
 	require.True(t, errors.As(err, &depErr))
-	assert.Equal(t, "mongodb", depErr.Ref)
+	assert.Equal(t, "redis", depErr.Ref)
 	assert.Equal(t, []string{
 		"network rpm-dev",
-		"run rpm-dev-mongodb",
+		"run rpm-dev-postgres",
+		"reuse rpm-dev-rabbitmq",
+		"ensure rpm-dev-redis",
+		"remove-container rpm-dev-postgres",
 	}, backend.calls)
 }
 
@@ -574,11 +637,12 @@ func TestFileVolumeNamerPersistsAndPrunesBlueprintEntries(t *testing.T) {
 }
 
 type recordingBackend struct {
-	calls             []string
-	containers        []docker.ContainerSpec
-	missingContainers map[string]bool
-	missingNetworks   map[string]bool
-	runErrs           map[string]error
+	calls              []string
+	containers         []docker.ContainerSpec
+	missingContainers  map[string]bool
+	missingNetworks    map[string]bool
+	ensureErrs         map[string]error
+	existingContainers map[string]string
 }
 
 type readinessCall struct {
@@ -611,13 +675,22 @@ func (b *recordingBackend) EnsureVolume(_ context.Context, name string) error {
 	return nil
 }
 
-func (b *recordingBackend) RunContainer(_ context.Context, spec docker.ContainerSpec) error {
+func (b *recordingBackend) EnsureContainer(_ context.Context, spec docker.ContainerSpec) (docker.ContainerState, error) {
+	if b.ensureErrs[spec.Name] != nil {
+		b.calls = append(b.calls, "ensure "+spec.Name)
+		return docker.ContainerState{}, b.ensureErrs[spec.Name]
+	}
+	if state := b.existingContainers[spec.Name]; state != "" {
+		if state == "running" {
+			b.calls = append(b.calls, "reuse "+spec.Name)
+			return docker.ContainerState{}, nil
+		}
+		b.calls = append(b.calls, "start "+spec.Name)
+		return docker.ContainerState{}, nil
+	}
 	b.calls = append(b.calls, "run "+spec.Name)
 	b.containers = append(b.containers, spec)
-	if b.runErrs[spec.Name] != nil {
-		return b.runErrs[spec.Name]
-	}
-	return nil
+	return docker.ContainerState{Created: true}, nil
 }
 
 func (b *recordingBackend) RemoveContainer(_ context.Context, name string) error {
