@@ -37,6 +37,7 @@ type Target struct {
 	Env         []EnvVar
 	ExplicitEnv []EnvVar
 	OverrideEnv []EnvVar
+	DotenvEnv   []EnvVar
 	Reload      bool
 	Watch       Watch
 	Dotenv      Dotenv
@@ -48,6 +49,7 @@ type BeforeTarget struct {
 	Command    string
 	WorkingDir string
 	Env        []EnvVar
+	DotenvEnv  []EnvVar
 }
 
 type resolvedBeforeTarget struct {
@@ -180,6 +182,7 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		}
 		bundle := repo.Bundles()[target.BundleName]
 		addBundle(bundle)
+		env, dotenvEnv := resolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget)
 
 		reload := false
 		if blueprint.ReloadPolicy.Enabled {
@@ -194,8 +197,9 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			Command:     target.Cmd,
 			WorkingDir:  ResolveWorkingDir(repo.RepoRoot(), target),
 			Env:         ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
-			ExplicitEnv: ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget),
+			ExplicitEnv: env,
 			OverrideEnv: envVars(bpTarget.Env),
+			DotenvEnv:   dotenvEnv,
 			Reload:      reload,
 			Watch: Watch{
 				Roots:   ResolveWatchRoots(repo.RepoRoot(), bundle, target),
@@ -246,12 +250,14 @@ func ResolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 
 func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, target *models.Target) BeforeTarget {
 	bundle := repo.Bundles()[target.BundleName]
+	env, dotenvEnv := resolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{})
 	return BeforeTarget{
 		Ref:        target.ID(),
 		ConfigPath: bundleConfigPath(bundle),
 		Command:    target.Cmd,
 		WorkingDir: ResolveWorkingDir(repo.RepoRoot(), target),
-		Env:        ResolveGeneratedTargetEnv(repo, bundle, target, blueprint, models.EnvironmentTarget{}),
+		Env:        env,
+		DotenvEnv:  dotenvEnv,
 	}
 }
 
@@ -304,16 +310,23 @@ func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *mo
 }
 
 func ResolveGeneratedTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
+	env, _ := resolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget)
+	return env
+}
+
+func resolveGeneratedTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) ([]EnvVar, []EnvVar) {
 	env := appendExplicitTargetEnv(nil, repo, bundle, target, blueprint, bpTarget)
+	dotenv := []string{}
 	if target.Config.Dotenv.Enabled {
 		for _, filePath := range ResolveDotenvFiles(repo.RepoRoot(), bundle, target) {
 			fileVars, err := rpmexec.LoadDotenv(filePath)
 			if err == nil {
 				env = appendEnvMap(env, fileVars)
+				dotenv = appendEnvMap(dotenv, fileVars)
 			}
 		}
 	}
-	return mergeEnvVars(env)
+	return mergeEnvVars(env), mergeEnvVars(dotenv)
 }
 
 func ResolveWatchRoots(repoRoot string, bundle *models.Bundle, target *models.Target) []string {

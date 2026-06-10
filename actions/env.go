@@ -197,6 +197,7 @@ func expandTargetProcess(target envstarlark.TargetProcess, repoRoot string) envs
 	target.ConfigPath = expandString(target.ConfigPath, repoRoot)
 	target.WorkingDir = expandString(target.WorkingDir, repoRoot)
 	target.Env = expandMap(target.Env, repoRoot)
+	target.DotenvEnv = expandMap(target.DotenvEnv, repoRoot)
 	return target
 }
 
@@ -306,6 +307,7 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 			Command:    target.Command,
 			WorkingDir: target.WorkingDir,
 			Env:        envVarMap(target.Env),
+			DotenvEnv:  envVarMap(target.DotenvEnv),
 		})
 	}
 	for _, target := range env.Targets {
@@ -315,6 +317,7 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 			Command:    target.Command,
 			WorkingDir: target.WorkingDir,
 			Env:        envVarMap(target.ExplicitEnv),
+			DotenvEnv:  envVarMap(target.DotenvEnv),
 			Reload:     target.Reload,
 		})
 		plan.Watches = append(plan.Watches, envstarlark.Watch{

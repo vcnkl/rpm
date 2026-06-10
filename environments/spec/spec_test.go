@@ -53,7 +53,7 @@ env:
 	bundleRoot := filepath.Join(repoRoot, "apps", "api")
 	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, ".env"), []byte("FROM_DOTENV=base\nOVERRIDE=dotenv\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, ".env.local"), []byte("FROM_LOCAL_DOTENV=local\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, ".env.local"), []byte("FROM_LOCAL_DOTENV=local\nOVERRIDE=local-dotenv\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: api
 env:
@@ -92,10 +92,20 @@ targets:
 	assert.Equal(t, "bp-target", values["FROM_BLUEPRINT_TARGET"])
 	assert.Equal(t, "base", values["FROM_DOTENV"])
 	assert.Equal(t, "local", values["FROM_LOCAL_DOTENV"])
-	assert.Equal(t, "dotenv", values["OVERRIDE"])
+	assert.Equal(t, "local-dotenv", values["OVERRIDE"])
 	assert.Equal(t, repoRoot, values["REPO_ROOT"])
 	assert.Equal(t, bundleRoot, values["BUNDLE_ROOT"])
 	assert.Equal(t, []string{filepath.Join(bundleRoot, ".env"), filepath.Join(bundleRoot, ".env.local")}, spec.ResolveDotenvFiles(repoRoot, bundle, target))
+
+	resolved, err := spec.Resolve(repo, blueprint)
+	require.NoError(t, err)
+	require.Len(t, resolved.Targets, 1)
+	dotenvValues := envMap(resolved.Targets[0].DotenvEnv)
+	assert.Equal(t, map[string]string{
+		"FROM_DOTENV":       "base",
+		"FROM_LOCAL_DOTENV": "local",
+		"OVERRIDE":          "local-dotenv",
+	}, dotenvValues)
 }
 
 func TestResolveBeforeTargetsReuseTargetContext(t *testing.T) {
@@ -151,6 +161,7 @@ targets:
 	assert.Equal(t, "target", targetEnv["TARGET_VAR"])
 	assert.Equal(t, "stack", targetEnv["STACK_VAR"])
 	assert.Equal(t, "dotenv", targetEnv["FROM_DOTENV"])
+	assert.Equal(t, map[string]string{"FROM_DOTENV": "dotenv"}, envMap(resolved.BeforeTargets[0].DotenvEnv))
 	assert.Equal(t, []spec.RuntimeUnit{
 		{Id: "api:migrate", Kind: "before"},
 		{Id: "api:serve", Kind: "target"},

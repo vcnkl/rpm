@@ -213,6 +213,113 @@ func TestUpDependencyEnvOverridesDotenvValueInFinalEnvMap(t *testing.T) {
 	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
 }
 
+func TestUpSubstitutesDependencyEnvInDotenvValues(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.Targets[0].Env["MONGODB_URI"] = "mongodb://localhost:${MONGODB_PORT}/bids"
+	plan.Targets[0].Env["STATIC_URI"] = "mongodb://localhost:${MONGODB_PORT}/static"
+	plan.Targets[0].DotenvEnv = map[string]string{
+		"MONGODB_URI": "mongodb://localhost:${MONGODB_PORT}/bids",
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 1)
+	assert.Equal(t, "mongodb://localhost:49152/bids", processes.started[0].Env["MONGODB_URI"])
+	assert.Equal(t, "mongodb://localhost:${MONGODB_PORT}/static", processes.started[0].Env["STATIC_URI"])
+	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
+}
+
+func TestUpLeavesMissingDotenvSubstitutionLiteral(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.Targets[0].Env["MONGODB_URI"] = "mongodb://localhost:${MONGODB_PORT}/bids"
+	plan.Targets[0].DotenvEnv = map[string]string{
+		"MONGODB_URI": "mongodb://localhost:${MONGODB_PORT}/bids",
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"POSTGRES_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 1)
+	assert.Equal(t, "mongodb://localhost:${MONGODB_PORT}/bids", processes.started[0].Env["MONGODB_URI"])
+}
+
+func TestUpSubstitutedDotenvValuePersistsAcrossRestart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	processes := &fakeProcessRunner{block: true}
+	actions := make(chan envruntime.ControlAction, 1)
+	plan := testPlan()
+	plan.Targets[0].Env["MONGODB_URI"] = "mongodb://localhost:${MONGODB_PORT}/bids"
+	plan.Targets[0].DotenvEnv = map[string]string{
+		"MONGODB_URI": "mongodb://localhost:${MONGODB_PORT}/bids",
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		ControlActions: actions,
+		NoReload:       true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: "api:serve"}
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+
+	require.Len(t, processes.started, 2)
+	assert.Equal(t, "mongodb://localhost:49152/bids", processes.started[0].Env["MONGODB_URI"])
+	assert.Equal(t, "mongodb://localhost:49152/bids", processes.started[1].Env["MONGODB_URI"])
+}
+
+func TestUpDependencyEnvOverridesSubstitutedDotenvValue(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.Targets[0].Env["MONGODB_PORT"] = "${POSTGRES_PORT}"
+	plan.Targets[0].DotenvEnv = map[string]string{
+		"MONGODB_PORT": "${POSTGRES_PORT}",
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152", "POSTGRES_PORT": "5432"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 1)
+	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
+}
+
 func TestUpDependencyEnvOverridesBeforeTargetEnvInNormalizedPlan(t *testing.T) {
 	processes := &fakeProcessRunner{}
 	plan := testPlan()
@@ -239,6 +346,32 @@ func TestUpDependencyEnvOverridesBeforeTargetEnvInNormalizedPlan(t *testing.T) {
 	assert.Equal(t, "49152", processes.started[0].Env["MONGODB_PORT"])
 	assert.Equal(t, "api:serve", processes.started[1].Ref)
 	assert.Equal(t, "49152", processes.started[1].Env["MONGODB_PORT"])
+}
+
+func TestUpSubstitutesDependencyEnvInBeforeTargetDotenvValues(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{{
+		Ref:        "api:migrate",
+		Command:    "echo migrate",
+		WorkingDir: "/repo/api",
+		Env:        map[string]string{"MONGODB_URI": "mongodb://localhost:${MONGODB_PORT}/bids"},
+		DotenvEnv:  map[string]string{"MONGODB_URI": "mongodb://localhost:${MONGODB_PORT}/bids"},
+	}}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"MONGODB_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.Len(t, processes.started, 2)
+	assert.Equal(t, "api:migrate", processes.started[0].Ref)
+	assert.Equal(t, "mongodb://localhost:49152/bids", processes.started[0].Env["MONGODB_URI"])
 }
 
 func TestUpShellBeforeTargetUsesDynamicDependencyEnv(t *testing.T) {

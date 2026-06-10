@@ -50,6 +50,7 @@ type TargetProcess struct {
 	Command    string
 	WorkingDir string
 	Env        map[string]string
+	DotenvEnv  map[string]string
 	Reload     bool
 }
 

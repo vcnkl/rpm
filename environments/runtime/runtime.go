@@ -743,11 +743,45 @@ func targetWithDependencyEnv(target envstarlark.TargetProcess, env map[string]st
 	if values == nil {
 		values = make(map[string]string)
 	}
+	dotenv := copyStringMap(target.DotenvEnv)
+	for key, value := range dotenv {
+		dotenv[key] = substituteEnv(value, env)
+		values[key] = dotenv[key]
+	}
 	for key, value := range env {
 		values[key] = value
 	}
 	target.Env = values
+	target.DotenvEnv = dotenv
 	return target
+}
+
+func substituteEnv(value string, env map[string]string) string {
+	if !strings.Contains(value, "${") {
+		return value
+	}
+	var result strings.Builder
+	for {
+		start := strings.Index(value, "${")
+		if start == -1 {
+			result.WriteString(value)
+			return result.String()
+		}
+		result.WriteString(value[:start])
+		rest := value[start+2:]
+		end := strings.Index(rest, "}")
+		if end == -1 {
+			result.WriteString(value[start:])
+			return result.String()
+		}
+		name := rest[:end]
+		if replacement, ok := env[name]; ok {
+			result.WriteString(replacement)
+		} else {
+			result.WriteString(value[start : start+end+3])
+		}
+		value = rest[end+1:]
+	}
 }
 
 func copyStringMap(values map[string]string) map[string]string {
