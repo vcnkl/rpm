@@ -11,6 +11,21 @@ import (
 
 const barWidth = 22
 
+const (
+	cpuColWidth      = 6
+	memColWidth      = 7
+	restartSlotWidth = 2
+	metricsBlockSep  = 1
+	rosterBaseUsed   = 11
+	minRosterLabel   = 8
+)
+
+const metricsBlockWidth = metricsBlockSep + cpuColWidth + memColWidth + restartSlotWidth
+
+func metricsColumnsFit(interior int) bool {
+	return interior >= rosterBaseUsed+metricsBlockWidth+minRosterLabel
+}
+
 func (m dashboardModel) View() string {
 	if m.width < 24 || m.height < 8 {
 		return m.theme.dim.Render("rpm env · enlarge the terminal")
@@ -52,7 +67,7 @@ func (m dashboardModel) renderHeader(width int) string {
 	left := lipgloss.JoinVertical(lipgloss.Left,
 		m.theme.wordmark.Render("⟫ RPM")+m.theme.callsign.Render(" ENV"),
 		m.theme.base.Bold(true).Render(m.state.blueprint),
-		m.theme.dim.Render(fmt.Sprintf("%d units", summary.total)),
+		m.theme.dim.Render(fmt.Sprintf("%d targets", summary.targets)),
 	)
 
 	barRow := progressBar(m.theme, frac, barWidth) +
@@ -60,6 +75,7 @@ func (m dashboardModel) renderHeader(width int) string {
 	right := lipgloss.JoinVertical(lipgloss.Right,
 		barRow,
 		m.renderPills(summary),
+		m.metricsReadout(),
 		m.theme.dim.Render("⧗ "+formatDuration(time.Since(m.startedAt))),
 	)
 
@@ -89,6 +105,13 @@ func (m dashboardModel) renderPills(summary unitSummary) string {
 
 func (m dashboardModel) pill(label string, color lipgloss.TerminalColor) string {
 	return m.theme.r.NewStyle().Bold(true).Foreground(color).Render(label)
+}
+
+func (m dashboardModel) metricsReadout() string {
+	return m.theme.dim.Render("CPU ") +
+		m.theme.callsign.Render(fmt.Sprintf("%.1f%%", m.metricsTotal.CPU)) +
+		m.theme.dim.Render("  MEM ") +
+		m.theme.callsign.Render(formatBytes(m.metricsTotal.MemBytes))
 }
 
 func (m dashboardModel) renderBody(width, height int) string {
@@ -151,14 +174,26 @@ func (m dashboardModel) renderRoster(totalW, totalH int) string {
 }
 
 func (m dashboardModel) rosterTitle(interior int) string {
-	label := m.theme.panelTitle.Render("UNITS")
+	label := m.theme.panelTitle.Render("TARGETS")
 	suffix := ""
 	if m.filtering || m.filter != "" {
 		suffix = m.theme.callsign.Render(" /" + m.filter + cursorGlyph(m.filtering))
 	} else if !m.state.showDependencies {
 		suffix = m.theme.dim.Render(" deps hidden")
 	}
-	return truncateStyled(label+suffix, interior)
+	left := label + suffix
+	if !metricsColumnsFit(interior) {
+		return truncateStyled(left, interior)
+	}
+	headers := strings.Repeat(" ", metricsBlockSep) +
+		m.theme.dim.Render(padLeft("CPU", cpuColWidth)) +
+		m.theme.dim.Render(padLeft("MEM", memColWidth)) +
+		strings.Repeat(" ", restartSlotWidth)
+	gap := interior - lipgloss.Width(left) - lipgloss.Width(headers)
+	if gap < 1 {
+		return truncateStyled(left+headers, interior)
+	}
+	return left + strings.Repeat(" ", gap) + headers
 }
 
 func cursorGlyph(active bool) string {
@@ -195,6 +230,9 @@ func (m dashboardModel) buildRosterRows() ([]rosterRow, int) {
 
 func (m dashboardModel) renderRosterRow(row rosterRow, interior int) string {
 	if row.header {
+		if row.kind == kindTarget {
+			return m.theme.groupRule.Render(truncate(strings.Repeat("─", interior), interior))
+		}
 		rule := "── " + groupLabel(row.kind) + " "
 		rule = rule + strings.Repeat("─", maxInt(0, interior-len([]rune(rule))))
 		return m.theme.groupRule.Render(truncate(rule, interior))
@@ -210,11 +248,15 @@ func (m dashboardModel) renderRosterRow(row rosterRow, interior int) string {
 	badgeText, badgeColor := kindBadge(unit.Kind)
 	badge := m.theme.r.NewStyle().Foreground(badgeColor).Bold(true).Render(padRight(badgeText, 6))
 
-	restart := ""
-	used := 2 + 1 + 1 + 6 + 1
-	if unit.Kind == kindTarget {
-		restart = " " + m.zones.Mark(zoneRestart(m.zonePrefix, row.unitIndex), m.theme.r.NewStyle().Foreground(colReload).Render("⟳"))
-		used += 2
+	showMetrics := metricsColumnsFit(interior)
+	used := rosterBaseUsed
+	var right string
+	if showMetrics {
+		used += metricsBlockWidth
+		right = m.rosterMetricsBlock(unit, row.unitIndex)
+	} else if unit.Kind == kindTarget {
+		used += restartSlotWidth
+		right = " " + m.zones.Mark(zoneRestart(m.zonePrefix, row.unitIndex), m.theme.r.NewStyle().Foreground(colReload).Render("⟳"))
 	}
 	avail := interior - used
 	if avail < 1 {
@@ -225,17 +267,35 @@ func (m dashboardModel) renderRosterRow(row rosterRow, interior int) string {
 		label = unit.Ref + "  " + unit.Error
 	}
 	label = truncate(label, avail)
+	if showMetrics {
+		label = padRight(label, avail)
+	}
 	labelStyle := m.theme.rowBase
 	if unit.Status == statusFailed {
 		labelStyle = m.theme.errLine
 	}
 
-	inner := accent + glyph + " " + badge + " " + labelStyle.Render(label) + restart
+	inner := accent + glyph + " " + badge + " " + labelStyle.Render(label) + right
 	wrap := m.theme.r.NewStyle().Width(interior)
 	if selected {
 		wrap = wrap.Background(colPanel).Bold(true)
 	}
 	return m.zones.Mark(zoneRow(m.zonePrefix, row.unitIndex), wrap.Render(inner))
+}
+
+func (m dashboardModel) rosterMetricsBlock(unit unitState, index int) string {
+	cpuText, memText := "—", "—"
+	if sample, ok := m.targetMetrics[unit.Ref]; ok {
+		cpuText = fmt.Sprintf("%.1f%%", sample.CPU)
+		memText = formatBytes(sample.MemBytes)
+	}
+	cpuCol := m.theme.dim.Render(padLeft(cpuText, cpuColWidth))
+	memCol := m.theme.dim.Render(padLeft(memText, memColWidth))
+	restart := strings.Repeat(" ", restartSlotWidth)
+	if unit.Kind == kindTarget {
+		restart = " " + m.zones.Mark(zoneRestart(m.zonePrefix, index), m.theme.r.NewStyle().Foreground(colReload).Render("⟳"))
+	}
+	return strings.Repeat(" ", metricsBlockSep) + cpuCol + memCol + restart
 }
 
 func (m dashboardModel) renderLog(totalW, totalH int, focused bool) string {
@@ -358,7 +418,7 @@ func (m dashboardModel) renderFooter(width int) string {
 func (m dashboardModel) footerReadout() string {
 	visible := m.visibleUnits()
 	if len(visible) == 0 {
-		return m.theme.dim.Render("no units")
+		return m.theme.dim.Render("no targets")
 	}
 	position := m.selectedIndex(visible) + 1
 	return m.theme.dim.Render(fmt.Sprintf("%d/%d", position, len(visible)))
@@ -386,4 +446,22 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func formatBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	value := float64(b) / float64(div)
+	suffix := []string{"KB", "MB", "GB", "TB", "PB"}[exp]
+	if value >= 100 {
+		return fmt.Sprintf("%.0f%s", value, suffix)
+	}
+	return fmt.Sprintf("%.1f%s", value, suffix)
 }

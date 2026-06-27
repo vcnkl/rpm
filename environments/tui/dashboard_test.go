@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/vcnkl/rpm/environments/metrics"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 )
 
@@ -63,7 +64,7 @@ func TestDashboardViewRendersRoster(t *testing.T) {
 		envruntime.Event{Type: envruntime.EventProcessStarted, Ref: "api:serve"},
 	)
 	view := model.View()
-	for _, want := range []string{"RPM", "UNITS", "TARGETS", "api:serve", "LOGS"} {
+	for _, want := range []string{"RPM", "TARGETS", "api:serve", "LOGS"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q\n%s", want, view)
 		}
@@ -175,6 +176,31 @@ func TestDashboardSingleTickChain(t *testing.T) {
 	model = next.(dashboardModel)
 	if cmd == nil || !model.ticking {
 		t.Fatal("tick should re-arm while the progress bar is still settling")
+	}
+}
+
+func TestDashboardRendersMetrics(t *testing.T) {
+	manager := zone.New()
+	t.Cleanup(manager.Close)
+	model := newDashboardModel(newTheme(io.Discard), manager, &fakeController{}, "local-stack", false)
+	model.width = 140
+	model.height = 30
+	model = feed(model,
+		envruntime.Event{Type: envruntime.EventUnitDeclared, Ref: "postgres", Kind: "dependency", Status: "running"},
+		envruntime.Event{Type: envruntime.EventUnitDeclared, Ref: "api:serve", Kind: "target", Status: "running"},
+	)
+
+	next, _ := model.Update(metricsMsg{snapshot: metrics.Snapshot{
+		Targets: map[string]metrics.Sample{"api:serve": {CPU: 12.3, MemBytes: 256 * 1024 * 1024}},
+		Total:   metrics.Sample{CPU: 12.3, MemBytes: 256 * 1024 * 1024},
+	}})
+	model = next.(dashboardModel)
+
+	view := model.View()
+	for _, want := range []string{"CPU", "MEM", "12.3%", "256MB", "—"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("metrics view missing %q\n%s", want, view)
+		}
 	}
 }
 

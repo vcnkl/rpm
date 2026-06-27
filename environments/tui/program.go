@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/vcnkl/rpm/environments/metrics"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 )
 
@@ -48,6 +50,7 @@ type DashboardConfig struct {
 	Run        func(ctx context.Context) error
 	Input      io.Reader
 	Output     io.Writer
+	Sampler    metrics.Sampler
 }
 
 func RunDashboard(ctx context.Context, cfg DashboardConfig) error {
@@ -73,6 +76,10 @@ func RunDashboard(ctx context.Context, cfg DashboardConfig) error {
 	program := tea.NewProgram(model, opts...)
 	cfg.Sink.Bind(program)
 
+	if cfg.Sampler != nil {
+		go sampleMetrics(ctx, program, cfg.Sampler)
+	}
+
 	runErr := make(chan error, 1)
 	go func() {
 		err := cfg.Run(ctx)
@@ -85,4 +92,18 @@ func RunDashboard(ctx context.Context, cfg DashboardConfig) error {
 		return err
 	}
 	return uiErr
+}
+
+func sampleMetrics(ctx context.Context, program *tea.Program, sampler metrics.Sampler) {
+	ticker := time.NewTicker(metricsInterval)
+	defer ticker.Stop()
+	program.Send(metricsMsg{snapshot: sampler.Sample(ctx)})
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			program.Send(metricsMsg{snapshot: sampler.Sample(ctx)})
+		}
+	}
 }

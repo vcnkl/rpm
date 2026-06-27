@@ -4,13 +4,20 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/vcnkl/rpm/environments/metrics"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 )
 
 const frameInterval = time.Second / 60
 
+const metricsInterval = time.Second
+
 type eventMsg struct {
 	event envruntime.Event
+}
+
+type metricsMsg struct {
+	snapshot metrics.Snapshot
 }
 
 type tickMsg struct{}

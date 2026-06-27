@@ -9,6 +9,7 @@ import (
 
 	"github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/environments/generator"
+	"github.com/vcnkl/rpm/environments/metrics"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	runtimedocker "github.com/vcnkl/rpm/environments/runtime/docker"
 	envspec "github.com/vcnkl/rpm/environments/spec"
@@ -51,8 +52,16 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		sink = progSink
 	}
 
+	var processRunner envruntime.ProcessRunner = envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err)
+	var sampler metrics.Sampler
+	if !opts.NonInteractive {
+		registry := metrics.NewRegistry()
+		processRunner = metrics.NewProcessRunner(processRunner, registry)
+		sampler = metrics.NewSampler(registry)
+	}
+
 	runner := envruntime.NewRunner(envruntime.Options{
-		ProcessRunner:    envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err),
+		ProcessRunner:    processRunner,
 		DependencyRunner: a.dockerCLI(),
 		ReloadWatcher:    envruntime.NewWatcherFactory(),
 		EventSink:        sink,
@@ -71,6 +80,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		Run:        func(runCtx context.Context) error { return runner.Up(runCtx, plan) },
 		Input:      os.Stdin,
 		Output:     stderrOrDefault(a.err),
+		Sampler:    sampler,
 	})
 }
 

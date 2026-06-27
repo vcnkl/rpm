@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/harmonica"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/vcnkl/rpm/environments/metrics"
 )
 
 const (
@@ -51,21 +52,25 @@ type dashboardModel struct {
 	barVel       float64
 	spinnerTicks int
 
+	targetMetrics map[string]metrics.Sample
+	metricsTotal  metrics.Sample
+
 	startedAt time.Time
 }
 
 func newDashboardModel(t *theme, mgr *zone.Manager, controller Controller, blueprint string, animate bool) dashboardModel {
 	return dashboardModel{
-		theme:      t,
-		zones:      mgr,
-		zonePrefix: mgr.NewPrefix(),
-		controller: controller,
-		state:      newEnvState(blueprint),
-		width:      100,
-		height:     30,
-		animate:    animate,
-		spring:     harmonica.NewSpring(harmonica.FPS(animationFPS), 6.0, 0.85),
-		startedAt:  time.Now(),
+		theme:         t,
+		zones:         mgr,
+		zonePrefix:    mgr.NewPrefix(),
+		controller:    controller,
+		state:         newEnvState(blueprint),
+		width:         100,
+		height:        30,
+		animate:       animate,
+		spring:        harmonica.NewSpring(harmonica.FPS(animationFPS), 6.0, 0.85),
+		targetMetrics: make(map[string]metrics.Sample),
+		startedAt:     time.Now(),
 	}
 }
 
@@ -88,6 +93,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		next, cmd := m.scheduleTick()
 		return next, cmd
+	case metricsMsg:
+		m.targetMetrics = msg.snapshot.Targets
+		m.metricsTotal = msg.snapshot.Total
+		return m, nil
 	case runnerDoneMsg:
 		m.finished = true
 		m.runErr = msg.err
@@ -467,6 +476,14 @@ func padRight(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", gap)
+}
+
+func padLeft(s string, width int) string {
+	gap := width - utf8.RuneCountInString(s)
+	if gap <= 0 {
+		return s
+	}
+	return strings.Repeat(" ", gap) + s
 }
 
 func formatDuration(d time.Duration) string {
