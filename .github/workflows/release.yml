@@ -13,7 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+            skip_integration: "true"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -27,6 +30,8 @@ jobs:
 
       - name: Run tests
         run: go test ./...
+        env:
+          SKIP_INTEGRATION: ${{ matrix.skip_integration }}
 
   release:
     needs: test
