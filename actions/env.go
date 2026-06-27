@@ -42,13 +42,14 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		return err
 	}
 
-	sink := envruntime.EventSink(envruntime.NewLineEventSink(a.out, a.err))
-	tuiSink := (*envtui.EventSink)(nil)
-	if !opts.NonInteractive {
-		tuiSink = envtui.NewEventSink(512)
-		sink = tuiSink
-	}
 	controlActions := make(chan envruntime.ControlAction, 16)
+
+	var sink envruntime.EventSink = envruntime.NewLineEventSink(a.out, a.err)
+	progSink := (*envtui.ProgramSink)(nil)
+	if !opts.NonInteractive {
+		progSink = envtui.NewProgramSink()
+		sink = progSink
+	}
 
 	runner := envruntime.NewRunner(envruntime.Options{
 		ProcessRunner:    envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err),
@@ -60,21 +61,17 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		NoReload:         opts.NoReload,
 		Interactive:      !opts.NonInteractive,
 	})
-	if !opts.NonInteractive {
-		bridge := envtui.NewBridge(a.out, stderrOrDefault(a.err))
-		runErr := make(chan error, 1)
-		go func() {
-			runErr <- runner.Up(ctx, plan)
-			tuiSink.Close()
-		}()
-		if err := bridge.Run(ctx, tuiSink.Events(), controlSender{actions: controlActions}); err != nil {
-			runner.Stop()
-			_ = <-runErr
-			return err
-		}
-		return <-runErr
+	if opts.NonInteractive {
+		return runner.Up(ctx, plan)
 	}
-	return runner.Up(ctx, plan)
+	return envtui.RunDashboard(ctx, envtui.DashboardConfig{
+		Blueprint:  plan.Environment.Name,
+		Sink:       progSink,
+		Controller: controlSender{actions: controlActions},
+		Run:        func(runCtx context.Context) error { return runner.Up(runCtx, plan) },
+		Input:      os.Stdin,
+		Output:     stderrOrDefault(a.err),
+	})
 }
 
 type controlSender struct {
@@ -82,28 +79,17 @@ type controlSender struct {
 }
 
 func (s controlSender) Restart(_ context.Context, ref string) error {
-	s.Send(envtui.Action{Type: envtui.ActionRestart, Ref: ref})
+	s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: ref}
 	return nil
 }
 
 func (s controlSender) RestartAll(context.Context) error {
-	s.Send(envtui.Action{Type: envtui.ActionRestartAll})
+	s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartAll}
 	return nil
 }
 
 func (s controlSender) Stop() {
-	s.Send(envtui.Action{Type: envtui.ActionQuit})
-}
-
-func (s controlSender) Send(action envtui.Action) {
-	switch action.Type {
-	case envtui.ActionRestart:
-		s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: action.Ref}
-	case envtui.ActionRestartAll:
-		s.actions <- envruntime.ControlAction{Type: envruntime.ActionRestartAll}
-	case envtui.ActionQuit:
-		s.actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
-	}
+	s.actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
 }
 
 type EnvDownOptions struct {

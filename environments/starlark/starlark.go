@@ -205,7 +205,13 @@ func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlar
 	if err != nil {
 		return nil, err
 	}
-	builder(thread).targets = append(builder(thread).targets, TargetProcess{
+	b := builder(thread)
+	for _, t := range b.targets {
+		if t.Ref == ref {
+			return nil, fmt.Errorf("duplicate target ref %q", ref)
+		}
+	}
+	b.targets = append(b.targets, TargetProcess{
 		Ref: ref, ConfigPath: configPath, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
 	})
 	return gostarlark.None, nil
@@ -216,7 +222,13 @@ func rpmBeforeTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gos
 	if err != nil {
 		return nil, err
 	}
-	builder(thread).beforeTargets = append(builder(thread).beforeTargets, target)
+	b := builder(thread)
+	for _, bt := range b.beforeTargets {
+		if bt.Ref == target.Ref {
+			return nil, fmt.Errorf("duplicate before_target ref %q", target.Ref)
+		}
+	}
+	b.beforeTargets = append(b.beforeTargets, target)
 	return gostarlark.None, nil
 }
 

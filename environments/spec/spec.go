@@ -10,6 +10,7 @@ import (
 	rootconfig "github.com/vcnkl/rpm/config"
 	rpmexec "github.com/vcnkl/rpm/exec"
 	"github.com/vcnkl/rpm/models"
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
 type ResolvedEnvironment struct {
@@ -365,15 +366,29 @@ func ResolveDotenvFiles(repoRoot string, bundle *models.Bundle, target *models.T
 	}
 
 	bundleRoot := filepath.Join(repoRoot, bundle.Path)
-	files := []string{filepath.Join(bundleRoot, ".env")}
+	files := []string{}
+	seen := make(map[string]bool)
+	add := func(path string) {
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		files = append(files, path)
+	}
+	add(filepath.Join(bundleRoot, ".env"))
 	for _, file := range target.Config.Dotenv.Files {
-		pattern := filepath.Join(bundleRoot, file)
+		pattern, err := pathsafe.Resolve(bundleRoot, file)
+		if err != nil {
+			continue
+		}
 		matches, err := filepath.Glob(pattern)
 		if err != nil || len(matches) == 0 {
 			matches = []string{pattern}
 		}
 		sort.Strings(matches)
-		files = append(files, matches...)
+		for _, match := range matches {
+			add(match)
+		}
 	}
 	return files
 }

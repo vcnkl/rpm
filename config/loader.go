@@ -61,7 +61,14 @@ func discoverBundles(repoRoot string, ignore []string, repoDeps map[string]bool)
 			panic(err)
 		}
 		for _, pattern := range ignore {
-			if skip, _ := filepath.Match(pattern, relPath); skip {
+			skip, matchErr := filepath.Match(pattern, relPath)
+			if matchErr != nil {
+				panic(fmt.Sprintf("invalid ignore pattern %q: %v", pattern, matchErr))
+			}
+			if skip {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 		}

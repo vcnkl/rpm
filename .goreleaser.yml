@@ -4,7 +4,6 @@ project_name: rpm
 
 before:
   hooks:
-    - ./build.sh --tui-only
     - go mod tidy
 
 builds:
@@ -22,8 +21,6 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/vcnkl/rpm/cmd.Version={{.Version}}
-    tags:
-      - tui_bundle
 
 archives:
   - id: rpm

@@ -22,7 +22,7 @@ func targetSelectItems(targets []*models.Target, selected []string) []envtui.Sel
 			Group:    target.BundleName,
 			Status:   "selected",
 			Selected: isSelected,
-			Defaults: true,
+			Defaults: useDefaults,
 		})
 	}
 	return groupedTargetItems(grouped)

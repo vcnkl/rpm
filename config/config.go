@@ -81,7 +81,10 @@ func (c *Config) initCacheDir() string {
 
 func (c *Config) initBuildsPath() string {
 	buildsPath := filepath.Join(c.cacheDir, "builds.json")
-	if _, err := os.Stat(buildsPath); os.IsNotExist(err) {
+	if _, err := os.Stat(buildsPath); err != nil {
+		if !os.IsNotExist(err) {
+			panic(fmt.Sprintf("failed to stat builds.json: %v", err))
+		}
 		if err = os.WriteFile(buildsPath, []byte("{}"), 0644); err != nil {
 			panic(fmt.Sprintf("failed to create builds.json: %v", err))
 		}

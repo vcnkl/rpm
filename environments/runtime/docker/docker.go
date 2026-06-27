@@ -26,11 +26,12 @@ import (
 )
 
 type Backend interface {
-	EnsureNetwork(ctx context.Context, name string) error
-	EnsureVolume(ctx context.Context, name string) error
+	EnsureNetwork(ctx context.Context, name string) (bool, error)
+	EnsureVolume(ctx context.Context, name string) (bool, error)
 	EnsureContainer(ctx context.Context, spec ContainerSpec) (ContainerState, error)
 	RemoveContainer(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
+	RemoveVolume(ctx context.Context, name string) error
 }
 
 type PortAllocator interface {
@@ -104,45 +105,52 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		return envruntime.DependencyStartup{}, err
 	}
 	network := networkName(blueprint)
-	if err := c.backend.EnsureNetwork(ctx, network); err != nil {
+	createdNetwork, err := c.backend.EnsureNetwork(ctx, network)
+	if err != nil {
 		return envruntime.DependencyStartup{}, err
 	}
 	startup := envruntime.DependencyStartup{Env: make(map[string]string)}
 	startedContainers := []string{}
+	createdVolumes := []string{}
+	fail := func(ref string, cause error) (envruntime.DependencyStartup, error) {
+		depErr := envruntime.NewDependencyError(ref, cause)
+		if cleanupErr := c.cleanup(ctx, network, createdNetwork, startedContainers, createdVolumes); cleanupErr != nil {
+			return envruntime.DependencyStartup{}, errors.Wrapf(depErr, "%v", cleanupErr)
+		}
+		return envruntime.DependencyStartup{}, depErr
+	}
 	for _, dep := range dependencies {
 		volumeNames, volumeBinds, err := c.resolveVolumes(ctx, blueprint, dep)
 		if err != nil {
-			c.cleanupStartedContainers(ctx, startedContainers)
-			return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+			return fail(dep.Ref, err)
 		}
 		for _, volume := range volumeNames {
-			if err = c.backend.EnsureVolume(ctx, volume); err != nil {
-				c.cleanupStartedContainers(ctx, startedContainers)
-				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+			created, err := c.backend.EnsureVolume(ctx, volume)
+			if err != nil {
+				return fail(dep.Ref, err)
+			}
+			if created {
+				createdVolumes = append(createdVolumes, volume)
 			}
 		}
 		for _, name := range containerNames(blueprint, dep) {
 			spec, mappings, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
-				c.cleanupStartedContainers(ctx, startedContainers)
-				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+				return fail(dep.Ref, err)
 			}
 			state, err := c.ensureContainer(ctx, spec, mappings)
 			if err != nil {
-				c.cleanupStartedContainers(ctx, startedContainers)
-				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+				return fail(dep.Ref, err)
 			}
 			if state.Created {
 				startedContainers = append(startedContainers, name)
 			}
 			env, err := dependencyPortEnv(name, dep, mappings, state)
 			if err != nil {
-				c.cleanupStartedContainers(ctx, startedContainers)
-				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+				return fail(dep.Ref, err)
 			}
 			if err = c.runReadiness(ctx, name, dep, env); err != nil {
-				c.cleanupStartedContainers(ctx, startedContainers)
-				return envruntime.DependencyStartup{}, envruntime.NewDependencyError(dep.Ref, err)
+				return fail(dep.Ref, err)
 			}
 			for key, value := range env {
 				startup.Env[key] = value
@@ -183,10 +191,26 @@ func sameDependency(left, right envstarlark.Dependency) bool {
 		left.ReadinessCmd == right.ReadinessCmd
 }
 
-func (c *CLI) cleanupStartedContainers(ctx context.Context, names []string) {
-	for i := len(names) - 1; i >= 0; i-- {
-		_ = c.backend.RemoveContainer(ctx, names[i])
+func (c *CLI) cleanup(ctx context.Context, network string, createdNetwork bool, containers []string, volumes []string) error {
+	var msgs []string
+	record := func(err error) {
+		if err != nil && !isMissingDockerResource(err) {
+			msgs = append(msgs, err.Error())
+		}
 	}
+	for i := len(containers) - 1; i >= 0; i-- {
+		record(c.backend.RemoveContainer(ctx, containers[i]))
+	}
+	for i := len(volumes) - 1; i >= 0; i-- {
+		record(c.backend.RemoveVolume(ctx, volumes[i]))
+	}
+	if createdNetwork {
+		record(c.backend.RemoveNetwork(ctx, network))
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("cleanup: %s", strings.Join(msgs, "; "))
 }
 
 // ensureContainer ensures the dependency container exists, replacing an
@@ -329,43 +353,63 @@ type sdkBackend struct {
 	newClient sdkClientFactory
 }
 
-func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) error {
+func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) (bool, error) {
 	cli, err := b.client(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer cli.Close()
 
 	if _, err = sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err == nil {
-		return nil
+		return false, nil
 	} else if !isMissingDockerResource(err) {
-		return errors.Wrapf(err, "find docker network %s", name)
+		return false, errors.Wrapf(err, "find docker network %s", name)
 	}
 	if _, err = sdknetwork.New(ctx, sdknetwork.WithClient(cli), sdknetwork.WithName(name)); err == nil {
-		return nil
+		return true, nil
 	} else if !isExistingDockerNetwork(err) {
-		return errors.Wrapf(err, "create docker network %s", name)
+		return false, errors.Wrapf(err, "create docker network %s", name)
 	}
 	if _, err = sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err != nil {
-		return errors.Wrapf(err, "find existing docker network %s", name)
+		return false, errors.Wrapf(err, "find existing docker network %s", name)
 	}
-	return nil
+	return false, nil
 }
 
-func (b sdkBackend) EnsureVolume(ctx context.Context, name string) error {
+func (b sdkBackend) EnsureVolume(ctx context.Context, name string) (bool, error) {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer cli.Close()
+
+	if _, err = sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
+		return false, nil
+	} else if !isMissingDockerResource(err) {
+		return false, errors.Wrapf(err, "find docker volume %s", name)
+	}
+	if _, err = sdkvolume.New(ctx, sdkvolume.WithClient(cli), sdkvolume.WithName(name)); err != nil {
+		if isExistingDockerVolume(err) {
+			return false, nil
+		}
+		return false, errors.Wrapf(err, "create docker volume %s", name)
+	}
+	return true, nil
+}
+
+func (b sdkBackend) RemoveVolume(ctx context.Context, name string) error {
 	cli, err := b.client(ctx)
 	if err != nil {
 		return err
 	}
 	defer cli.Close()
 
-	if _, err = sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
-		return nil
-	} else if !isMissingDockerResource(err) {
-		return errors.Wrapf(err, "find docker volume %s", name)
+	found, err := sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli))
+	if err != nil {
+		return err
 	}
-	if _, err = sdkvolume.New(ctx, sdkvolume.WithClient(cli), sdkvolume.WithName(name)); err != nil && !isExistingDockerVolume(err) {
-		return errors.Wrapf(err, "create docker volume %s", name)
+	if err = found.Terminate(ctx, sdkvolume.WithForce()); err != nil {
+		return errors.Wrapf(err, "remove docker volume %s", name)
 	}
 	return nil
 }
@@ -431,7 +475,7 @@ func reuseExistingContainer(ctx context.Context, cli sdkclient.SDKClient, found 
 		return ContainerState{Ports: publishedPorts(inspect.Container)}, true, nil
 	}
 	if _, removeErr := cli.ContainerRemove(ctx, found.ID, client.ContainerRemoveOptions{Force: true}); removeErr != nil {
-		return ContainerState{}, false, errors.Wrapf(startErr, "start docker container %s", spec.Name)
+		return ContainerState{}, false, errors.Wrapf(removeErr, "remove unstartable docker container %s (start error: %v)", spec.Name, startErr)
 	}
 	return ContainerState{}, false, nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/vcnkl/rpm/cache/hashing"
 	"github.com/vcnkl/rpm/models"
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
 type Validator struct {
@@ -24,7 +25,7 @@ func NewValidator(repoRoot string, store *Store) *Validator {
 func (v *Validator) ShouldBuild(target *models.Target) (bool, string, error) {
 	bundleRoot := filepath.Join(v.repoRoot, target.BundlePath)
 
-	currentHash, err := hashing.HashInputs(bundleRoot, target.In)
+	currentHash, err := hashing.HashInputs(v.repoRoot, bundleRoot, target.In)
 	if err != nil {
 		return true, currentHash, err
 	}
@@ -53,8 +54,12 @@ func (v *Validator) outputsExist(target *models.Target) bool {
 	for _, out := range target.Out {
 		path := v.resolveOutputPath(out, target.BundlePath)
 
+		if !pathsafe.Contains(v.repoRoot, path) {
+			return false
+		}
+
 		if strings.Contains(path, "*") {
-			matches, err := filepath.Glob(path)
+			matches, err := hashing.ExpandGlob(path)
 			if err != nil || len(matches) == 0 {
 				return false
 			}

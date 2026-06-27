@@ -824,6 +824,7 @@ func TestUpReturnsDependencyReadinessFailure(t *testing.T) {
 		"network rpm-local-stack",
 		"run rpm-local-stack-postgres",
 		"remove-container rpm-local-stack-postgres",
+		"remove-network rpm-local-stack",
 	}, backend.calls)
 }
 
@@ -1203,6 +1204,7 @@ func TestUpReturnsScopedDependencyFailureAndCleansStartedContainers(t *testing.T
 		"ensure rpm-dev-rabbitmq",
 		"remove-container rpm-dev-postgres",
 		"remove-container rpm-dev-mongodb",
+		"remove-network rpm-dev",
 	}, backend.calls)
 }
 
@@ -1234,6 +1236,7 @@ func TestUpDoesNotRemoveReusedContainerWhenLaterDependencyFails(t *testing.T) {
 		"reuse rpm-dev-rabbitmq",
 		"ensure rpm-dev-redis",
 		"remove-container rpm-dev-postgres",
+		"remove-network rpm-dev",
 	}, backend.calls)
 }
 
@@ -1310,6 +1313,7 @@ type recordingBackend struct {
 	containers             []docker.ContainerSpec
 	missingContainers      map[string]bool
 	missingNetworks        map[string]bool
+	missingVolumes         map[string]bool
 	ensureErrs             map[string]error
 	existingContainers     map[string]string
 	existingContainerPorts map[string]map[string]string
@@ -1335,14 +1339,14 @@ func (r *recordingReadinessRunner) Run(_ context.Context, shell string, command 
 	return r.err
 }
 
-func (b *recordingBackend) EnsureNetwork(_ context.Context, name string) error {
+func (b *recordingBackend) EnsureNetwork(_ context.Context, name string) (bool, error) {
 	b.calls = append(b.calls, "network "+name)
-	return nil
+	return true, nil
 }
 
-func (b *recordingBackend) EnsureVolume(_ context.Context, name string) error {
+func (b *recordingBackend) EnsureVolume(_ context.Context, name string) (bool, error) {
 	b.calls = append(b.calls, "volume "+name)
-	return nil
+	return true, nil
 }
 
 func (b *recordingBackend) EnsureContainer(_ context.Context, spec docker.ContainerSpec) (docker.ContainerState, error) {
@@ -1398,6 +1402,14 @@ func (b *recordingBackend) RemoveNetwork(_ context.Context, name string) error {
 	b.calls = append(b.calls, "remove-network "+name)
 	if b.missingNetworks[name] {
 		return errors.New("no such network")
+	}
+	return nil
+}
+
+func (b *recordingBackend) RemoveVolume(_ context.Context, name string) error {
+	b.calls = append(b.calls, "remove-volume "+name)
+	if b.missingVolumes[name] {
+		return errors.New("no such volume")
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ type Debouncer struct {
 	duration time.Duration
 	timer    *time.Timer
 	mu       sync.Mutex
+	runMu    sync.Mutex
 }
 
 func NewDebouncer(duration time.Duration) *Debouncer {
@@ -25,5 +26,17 @@ func (d *Debouncer) Trigger(fn func()) {
 		d.timer.Stop()
 	}
 
-	d.timer = time.AfterFunc(d.duration, fn)
+	d.timer = time.AfterFunc(d.duration, func() {
+		d.runMu.Lock()
+		defer d.runMu.Unlock()
+		fn()
+	})
+}
+
+func (d *Debouncer) Stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.timer != nil {
+		d.timer.Stop()
+	}
 }

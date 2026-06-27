@@ -8,55 +8,57 @@ import (
 
 	"github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/models"
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
 func ComposeEnv(repoRoot string, repo *config.RepoConfig, bundle *models.Bundle, target *models.Target) []string {
-	env := os.Environ()
+	overrides := make([]string, 0)
 
 	for k, v := range repo.Env.Vars {
-		env = append(env, k+"="+v)
+		overrides = append(overrides, k+"="+v)
 	}
 
-	env = append(env, "REPO_ROOT="+repoRoot)
+	overrides = append(overrides, "REPO_ROOT="+repoRoot)
 
 	bundleRoot := filepath.Join(repoRoot, bundle.Path)
-	env = append(env, "BUNDLE_ROOT="+bundleRoot)
+	overrides = append(overrides, "BUNDLE_ROOT="+bundleRoot)
 
 	for k, v := range bundle.Env {
-		env = append(env, k+"="+v)
+		overrides = append(overrides, k+"="+v)
 	}
 
 	for k, v := range target.Env {
-		env = append(env, k+"="+v)
+		overrides = append(overrides, k+"="+v)
 	}
 
 	if target.Config.Dotenv.Enabled {
 		dotenvPath := filepath.Join(bundleRoot, ".env")
-		dotenvVars, err := LoadDotenv(dotenvPath)
-		if err == nil {
+		if dotenvVars, err := LoadDotenv(dotenvPath); err == nil {
 			for k, v := range dotenvVars {
-				env = append(env, k+"="+v)
+				overrides = append(overrides, k+"="+v)
 			}
 		}
 
 		for _, file := range target.Config.Dotenv.Files {
-			pattern := filepath.Join(bundleRoot, file)
+			pattern, err := pathsafe.Resolve(bundleRoot, file)
+			if err != nil {
+				continue
+			}
 			matches, err := filepath.Glob(pattern)
 			if err != nil || len(matches) == 0 {
 				matches = []string{pattern}
 			}
 			for _, filePath := range matches {
-				fileVars, err := LoadDotenv(filePath)
-				if err == nil {
+				if fileVars, err := LoadDotenv(filePath); err == nil {
 					for k, v := range fileVars {
-						env = append(env, k+"="+v)
+						overrides = append(overrides, k+"="+v)
 					}
 				}
 			}
 		}
 	}
 
-	return env
+	return MergeEnv(os.Environ(), overrides)
 }
 
 func LoadDotenv(path string) (map[string]string, error) {

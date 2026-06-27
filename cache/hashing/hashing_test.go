@@ -219,7 +219,7 @@ func TestHashInputs(t *testing.T) {
 				require.NoError(t, os.WriteFile(fullPath, []byte(content), 0644))
 			}
 
-			hash, err := HashInputs(tmpDir, tt.patterns)
+			hash, err := HashInputs(tmpDir, tmpDir, tt.patterns)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -248,10 +248,10 @@ func TestHashInputs_Deterministic(t *testing.T) {
 		require.NoError(t, os.WriteFile(fullPath, []byte(content), 0644))
 	}
 
-	hash1, err := HashInputs(tmpDir, []string{"src/*.go"})
+	hash1, err := HashInputs(tmpDir, tmpDir, []string{"src/*.go"})
 	require.NoError(t, err)
 
-	hash2, err := HashInputs(tmpDir, []string{"src/*.go"})
+	hash2, err := HashInputs(tmpDir, tmpDir, []string{"src/*.go"})
 	require.NoError(t, err)
 
 	assert.Equal(t, hash1, hash2)
@@ -263,12 +263,12 @@ func TestHashInputs_ChangesOnFileModification(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(filePath), 0755))
 	require.NoError(t, os.WriteFile(filePath, []byte("version1"), 0644))
 
-	hash1, err := HashInputs(tmpDir, []string{"src/main.go"})
+	hash1, err := HashInputs(tmpDir, tmpDir, []string{"src/main.go"})
 	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(filePath, []byte("version2"), 0644))
 
-	hash2, err := HashInputs(tmpDir, []string{"src/main.go"})
+	hash2, err := HashInputs(tmpDir, tmpDir, []string{"src/main.go"})
 	require.NoError(t, err)
 
 	assert.NotEqual(t, hash1, hash2)

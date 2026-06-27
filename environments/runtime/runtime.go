@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -122,19 +123,53 @@ type Runner struct {
 	mu        sync.Mutex
 	opts      Options
 	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 func NewRunner(opts Options) *Runner {
 	if opts.EventSink == nil {
 		opts.EventSink = discardSink{}
 	}
-	return &Runner{opts: opts, processes: make(map[string]Process), done: make(chan processExit)}
+	return &Runner{opts: opts, processes: make(map[string]Process), done: make(chan processExit), closing: make(chan struct{})}
+}
+
+func (r *Runner) setCancel(cancel context.CancelFunc) {
+	r.mu.Lock()
+	r.cancel = cancel
+	r.mu.Unlock()
+}
+
+func (r *Runner) setPlan(plan *envstarlark.RuntimePlan) {
+	r.mu.Lock()
+	r.plan = plan
+	r.mu.Unlock()
+}
+
+func (r *Runner) getPlan() *envstarlark.RuntimePlan {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.plan
+}
+
+func (r *Runner) shutdown() {
+	r.closeOnce.Do(func() { close(r.closing) })
+	r.wg.Wait()
+}
+
+func (r *Runner) emitExit(exit processExit) {
+	select {
+	case r.done <- exit:
+	case <-r.closing:
+	}
 }
 
 func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	ctx, cancel := context.WithCancel(ctx)
-	r.cancel = cancel
+	r.setCancel(cancel)
 	defer cancel()
+	defer r.shutdown()
 	r.declareUnits(plan)
 
 	startedDeps := false
@@ -153,7 +188,7 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
 		}
 	}
-	r.plan = plan
+	r.setPlan(plan)
 
 	for _, before := range plan.BeforeTargets {
 		if err := r.runBeforeTarget(ctx, before); err != nil {
@@ -195,11 +230,13 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			}
 			watchCtx, cancel := context.WithCancel(ctx)
 			watchCancel = cancel
+			r.wg.Add(1)
 			go func() {
+				defer r.wg.Done()
 				if err := r.opts.ReloadWatcher.Watch(watchCtx, watches, debounce, func(ref string, path string) {
 					r.reloadTarget(ctx, plan, ref, path)
 				}); err != nil && ctx.Err() == nil {
-					r.done <- processExit{err: err}
+					r.emitExit(processExit{err: err})
 				}
 			}()
 		}
@@ -251,10 +288,11 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 }
 
 func (r *Runner) Restart(ctx context.Context, ref string) error {
-	if r.plan == nil {
+	plan := r.getPlan()
+	if plan == nil {
 		return fmt.Errorf("runtime is not running")
 	}
-	target, ok := targetByRef(r.plan, ref)
+	target, ok := targetByRef(plan, ref)
 	if !ok {
 		return fmt.Errorf("unknown target %q", ref)
 	}
@@ -273,11 +311,12 @@ func (r *Runner) Restart(ctx context.Context, ref string) error {
 }
 
 func (r *Runner) RestartAll(ctx context.Context) error {
-	if r.plan == nil {
+	plan := r.getPlan()
+	if plan == nil {
 		return fmt.Errorf("runtime is not running")
 	}
-	for _, ref := range targetOrder(r.plan) {
-		if _, ok := targetByRef(r.plan, ref); ok {
+	for _, ref := range targetOrder(plan) {
+		if _, ok := targetByRef(plan, ref); ok {
 			if err := r.Restart(ctx, ref); err != nil {
 				return err
 			}
@@ -287,8 +326,11 @@ func (r *Runner) RestartAll(ctx context.Context) error {
 }
 
 func (r *Runner) Stop() {
-	if r.cancel != nil {
-		r.cancel()
+	r.mu.Lock()
+	cancel := r.cancel
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -370,8 +412,10 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	r.mu.Lock()
 	r.processes[target.Ref] = process
 	r.mu.Unlock()
+	r.wg.Add(1)
 	go func() {
-		r.done <- processExit{ref: target.Ref, process: process, err: process.Wait()}
+		defer r.wg.Done()
+		r.emitExit(processExit{ref: target.Ref, process: process, err: process.Wait()})
 	}()
 	r.opts.EventSink.Emit(Event{Type: EventProcessStarted, Ref: target.Ref})
 	return nil
@@ -445,9 +489,12 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		_ = stdout.Close()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		_ = stderr.Close()
 		return nil, err
 	}
 	stdoutDone := make(chan struct{})
@@ -779,7 +826,7 @@ func upsertDependencyEnvBlock(path string, env map[string]string) {
 	keys := referencedEnvKeys(body, env)
 	if len(keys) == 0 {
 		if hadBlock {
-			_ = os.WriteFile(path, []byte(body), dotenvFileMode(path))
+			_ = atomicWriteFile(path, []byte(body), dotenvFileMode(path))
 		}
 		return
 	}
@@ -793,7 +840,27 @@ func upsertDependencyEnvBlock(path string, env map[string]string) {
 	if next == content {
 		return
 	}
-	_ = os.WriteFile(path, []byte(next), dotenvFileMode(path))
+	_ = atomicWriteFile(path, []byte(next), dotenvFileMode(path))
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".rpm-dotenv-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func stripDependencyEnvBlock(content string) (string, bool) {
@@ -802,14 +869,13 @@ func stripDependencyEnvBlock(content string) (string, bool) {
 	stripped := false
 	inBlock := false
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == dotenvBlockBegin {
+		if line == dotenvBlockBegin {
 			inBlock = true
 			stripped = true
 			continue
 		}
 		if inBlock {
-			if trimmed == dotenvBlockEnd {
+			if line == dotenvBlockEnd {
 				inBlock = false
 			}
 			continue

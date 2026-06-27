@@ -9,17 +9,23 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
-func HashInputs(bundleRoot string, patterns []string) (string, error) {
+func HashInputs(repoRoot string, bundleRoot string, patterns []string) (string, error) {
 	var allFiles []string
 
 	for _, pattern := range patterns {
 		fullPattern := pattern
-		if !filepath.IsAbs(pattern) && !startsWithRepoRoot(pattern) {
+		if startsWithRepoRoot(pattern) {
+			fullPattern = filepath.Join(repoRoot, pattern[2:])
+		} else if !filepath.IsAbs(pattern) {
 			fullPattern = filepath.Join(bundleRoot, pattern)
-		} else if startsWithRepoRoot(pattern) {
-			fullPattern = pattern[2:]
+		}
+
+		if !pathsafe.Contains(repoRoot, fullPattern) {
+			return "", fmt.Errorf("input pattern %q escapes repository root", pattern)
 		}
 
 		matches, err := expandGlob(fullPattern)
@@ -49,6 +55,10 @@ func HashInputs(bundleRoot string, patterns []string) (string, error) {
 	}
 
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func ExpandGlob(pattern string) ([]string, error) {
+	return expandGlob(pattern)
 }
 
 func expandGlob(pattern string) ([]string, error) {
@@ -84,11 +94,11 @@ func expandDoubleStarGlob(pattern string) ([]string, error) {
 			return nil
 		}
 
-		matched, err := filepath.Match(suffix, filepath.Base(path))
-		if err != nil {
+		rel, relErr := filepath.Rel(baseDir, path)
+		if relErr != nil {
 			return nil
 		}
-		if matched {
+		if pathsafe.MatchSuffix(suffix, rel) {
 			matches = append(matches, path)
 		}
 

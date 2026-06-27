@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/vcnkl/rpm/models"
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
 type Selector struct {
@@ -55,11 +56,13 @@ func (s *Selector) SelectByBundleWithSuffix(bundleName, suffix string) []*Node {
 func (s *Selector) ResolveTargetRefs(refs []string, suffix string) []string {
 	var resolved []string
 	for _, ref := range refs {
-		if strings.Contains(ref, ":") {
-			parts := strings.Split(ref, ":")
-			targetName := parts[1]
+		if bundleName, targetName, ok := strings.Cut(ref, ":"); ok {
+			if bundleName == "" || targetName == "" || strings.Contains(targetName, ":") {
+				resolved = append(resolved, ref)
+				continue
+			}
 			if !strings.HasSuffix(targetName, suffix) {
-				candidate := parts[0] + ":" + targetName + suffix
+				candidate := bundleName + ":" + targetName + suffix
 				if _, ok := s.graph.Nodes[candidate]; ok {
 					resolved = append(resolved, candidate)
 					continue
@@ -136,26 +139,17 @@ func simpleGlobMatch(pattern, path string) bool {
 	}
 
 	prefix := parts[0]
-	suffix := parts[1]
+	suffix := strings.TrimPrefix(parts[1], "/")
 
 	if !strings.HasPrefix(path, prefix) {
 		return false
 	}
 
-	if suffix == "" || suffix == "/" {
+	if suffix == "" {
 		return true
 	}
 
-	suffixPattern := strings.TrimPrefix(suffix, "/")
-
-	if suffixPattern != "" {
-		matched, _ := filepath.Match(suffixPattern, filepath.Base(path))
-		if matched {
-			return true
-		}
-	}
-
-	return false
+	return pathsafe.MatchSuffix(suffix, strings.TrimPrefix(path, prefix))
 }
 
 type TargetNotFoundError struct {

@@ -49,6 +49,8 @@ func (w *Watcher) OnChange(fn func(path string)) {
 }
 
 func (w *Watcher) Start(ctx context.Context) error {
+	defer w.fsw.Close()
+
 	for _, path := range w.paths {
 		if err := w.addRecursive(path); err != nil {
 			return fmt.Errorf("failed to watch path %s: %w", path, err)
@@ -56,7 +58,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 
 	debouncer := NewDebouncer(w.debounce)
+	defer debouncer.Stop()
 
+	watchErr := make(chan error, 1)
 	go func() {
 		for {
 			select {
@@ -94,13 +98,22 @@ func (w *Watcher) Start(ctx context.Context) error {
 					return
 				}
 				if err != nil {
+					select {
+					case watchErr <- err:
+					default:
+					}
+					return
 				}
 			}
 		}
 	}()
 
-	<-ctx.Done()
-	return nil
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-watchErr:
+		return err
+	}
 }
 
 func (w *Watcher) Stop() {

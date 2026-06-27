@@ -2,15 +2,17 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/bitfield/script"
 	"github.com/vcnkl/rpm/models"
+	"github.com/vcnkl/rpm/pathsafe"
 )
 
 type ShellOptions struct {
@@ -41,39 +43,29 @@ func RunCommand(ctx context.Context, cmdStr string, opts *ShellOptions) error {
 	}
 
 	shellParts := strings.Fields(opts.Shell)
-	shellCmd := shellParts[0]
-	shellArgs := shellParts[1:]
-
-	wrappedCmd := cmdStr
-	if opts.WorkDir != "" {
-		wrappedCmd = fmt.Sprintf("cd %q && (\n%s\n)", opts.WorkDir, cmdStr)
+	if len(shellParts) == 0 {
+		shellParts = []string{"/bin/sh"}
 	}
+	args := append([]string{}, shellParts[1:]...)
+	args = append(args, "-c", cmdStr)
 
-	fullCmd := shellCmd
-	for _, arg := range shellArgs {
-		fullCmd += " " + arg
-	}
-	fullCmd += " -c " + shellQuote(wrappedCmd)
+	cmd := exec.CommandContext(ctx, shellParts[0], args...)
+	cmd.Env = opts.Env
+	cmd.Dir = opts.WorkDir
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
 
-	done := make(chan error, 1)
-	go func() {
-		pipe := script.NewPipe().WithEnv(opts.Env)
-		pipe = pipe.Exec(fullCmd)
-		pipe = pipe.WithStdout(opts.Stdout).WithStderr(opts.Stderr)
-		_, err := pipe.Stdout()
-		exitStatus := pipe.ExitStatus()
-		if err == nil && exitStatus != 0 {
-			err = fmt.Errorf("command exited with status %d", exitStatus)
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
 		}
-		done <- err
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-done:
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("command exited with status %d", exitErr.ExitCode())
+		}
 		return err
 	}
+	return nil
 }
 
 func shellQuote(s string) string {
@@ -91,6 +83,10 @@ func ResolveWorkDir(repoRoot string, target *models.Target) string {
 		if filepath.IsAbs(workDir) {
 			return workDir
 		}
-		return filepath.Join(repoRoot, target.BundlePath, workDir)
+		resolved, err := pathsafe.Resolve(repoRoot, filepath.Join(target.BundlePath, workDir))
+		if err != nil {
+			return filepath.Join(repoRoot, target.BundlePath)
+		}
+		return resolved
 	}
 }

@@ -23,9 +23,21 @@ type TaskFunc func(ctx context.Context, node *dag.Node) error
 func (p *ParallelExecutor) Execute(ctx context.Context, nodes []*dag.Node, fn TaskFunc) map[string]error {
 	results := make(map[string]error)
 	var mu sync.Mutex
+	setResult := func(id string, err error) {
+		mu.Lock()
+		results[id] = err
+		mu.Unlock()
+	}
+	getResult := func(id string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return results[id]
+	}
 
-	completed := make(map[string]bool)
-	var completedMu sync.Mutex
+	done := make(map[string]chan struct{}, len(nodes))
+	for _, node := range nodes {
+		done[node.ID] = make(chan struct{})
+	}
 
 	sem := make(chan struct{}, p.maxWorkers)
 	var wg sync.WaitGroup
@@ -34,69 +46,39 @@ func (p *ParallelExecutor) Execute(ctx context.Context, nodes []*dag.Node, fn Ta
 		wg.Add(1)
 		go func(n *dag.Node) {
 			defer wg.Done()
+			defer close(done[n.ID])
 
-			for {
+			anyDepFailed := false
+			for _, dep := range n.Deps {
+				depDone, tracked := done[dep.ID]
+				if !tracked {
+					continue
+				}
 				select {
 				case <-ctx.Done():
-					mu.Lock()
-					results[n.ID] = ctx.Err()
-					mu.Unlock()
+					setResult(n.ID, ctx.Err())
 					return
-				default:
+				case <-depDone:
 				}
-
-				allDepsDone := true
-				anyDepFailed := false
-
-				completedMu.Lock()
-				for _, dep := range n.Deps {
-					if !completed[dep.ID] {
-						allDepsDone = false
-						break
-					}
-					mu.Lock()
-					if results[dep.ID] != nil {
-						anyDepFailed = true
-					}
-					mu.Unlock()
-				}
-				completedMu.Unlock()
-
-				if anyDepFailed {
-					mu.Lock()
-					results[n.ID] = &DependencyFailedError{TargetID: n.ID}
-					mu.Unlock()
-					completedMu.Lock()
-					completed[n.ID] = true
-					completedMu.Unlock()
-					return
-				}
-
-				if allDepsDone {
-					break
+				if getResult(dep.ID) != nil {
+					anyDepFailed = true
 				}
 			}
 
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				mu.Lock()
-				results[n.ID] = ctx.Err()
-				mu.Unlock()
+			if anyDepFailed {
+				setResult(n.ID, &DependencyFailedError{TargetID: n.ID})
 				return
 			}
 
+			select {
+			case <-ctx.Done():
+				setResult(n.ID, ctx.Err())
+				return
+			case sem <- struct{}{}:
+			}
 			err := fn(ctx, n)
-
 			<-sem
-
-			mu.Lock()
-			results[n.ID] = err
-			mu.Unlock()
-
-			completedMu.Lock()
-			completed[n.ID] = true
-			completedMu.Unlock()
+			setResult(n.ID, err)
 		}(node)
 	}
 
