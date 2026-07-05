@@ -71,10 +71,7 @@ func envCreateCmd() *cli.Command {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
 			cfg := loadConfig(ctx)
-			reload := true
-			if ctx.Bool("no-reload") || trailingBools["no-reload"] {
-				reload = false
-			}
+			reload := !ctx.Bool("no-reload") && !trailingBools["no-reload"]
 			if ctx.Bool("reload") || trailingBools["reload"] {
 				reload = true
 			}
@@ -169,12 +166,12 @@ func envEditCmd() *cli.Command {
 			cfg := loadConfig(ctx)
 			var deps *bool
 			if ctx.Bool("deps") || ctx.Bool("no-deps") || trailingBools["deps"] || trailingBools["no-deps"] {
-				value := (ctx.Bool("deps") || trailingBools["deps"]) && !(ctx.Bool("no-deps") || trailingBools["no-deps"])
+				value := (ctx.Bool("deps") || trailingBools["deps"]) && !ctx.Bool("no-deps") && !trailingBools["no-deps"]
 				deps = &value
 			}
 			var reload *bool
 			if ctx.Bool("reload") || ctx.Bool("no-reload") || trailingBools["reload"] || trailingBools["no-reload"] {
-				value := (ctx.Bool("reload") || trailingBools["reload"]) && !(ctx.Bool("no-reload") || trailingBools["no-reload"])
+				value := (ctx.Bool("reload") || trailingBools["reload"]) && !ctx.Bool("no-reload") && !trailingBools["no-reload"]
 				reload = &value
 			}
 			targetReload := append(ctx.StringSlice("target-reload"), trailingStrings["target-reload"]...)
@@ -249,7 +246,7 @@ func envRenderCmd() *cli.Command {
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
-			fmt.Fprintln(ctx.App.Writer, path)
+			_, _ = fmt.Fprintln(ctx.App.Writer, path)
 			return nil
 		},
 	}

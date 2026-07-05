@@ -64,7 +64,7 @@ func TestStore_Save(t *testing.T) {
 				g := dag.NewGraph()
 				g.AddTarget(&models.Target{Name: "app_build", BundleName: "core", Deps: []string{":lib_build"}})
 				g.AddTarget(&models.Target{Name: "lib_build", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			expectError: false,
@@ -195,7 +195,7 @@ func TestStore_Serialize(t *testing.T) {
 				g := dag.NewGraph()
 				g.AddTarget(&models.Target{Name: "app_build", BundleName: "core", Deps: []string{":lib_build"}})
 				g.AddTarget(&models.Target{Name: "lib_build", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			expectedNodes: []Node{
@@ -228,7 +228,7 @@ func TestStore_SaveAndLoad(t *testing.T) {
 	g := dag.NewGraph()
 	g.AddTarget(&models.Target{Name: "app_build", BundleName: "core", Deps: []string{":lib_build"}})
 	g.AddTarget(&models.Target{Name: "lib_build", BundleName: "core"})
-	g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+	_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 
 	store := NewStore(path)
 	err := store.Save(g)

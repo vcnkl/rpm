@@ -358,7 +358,7 @@ func (b sdkBackend) EnsureNetwork(ctx context.Context, name string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	if _, err = sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli)); err == nil {
 		return false, nil
@@ -381,7 +381,7 @@ func (b sdkBackend) EnsureVolume(ctx context.Context, name string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	if _, err = sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli)); err == nil {
 		return false, nil
@@ -402,7 +402,7 @@ func (b sdkBackend) RemoveVolume(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	found, err := sdkvolume.FindByID(ctx, name, sdkvolume.WithFindClient(cli))
 	if err != nil {
@@ -419,7 +419,7 @@ func (b sdkBackend) EnsureContainer(ctx context.Context, spec ContainerSpec) (Co
 	if err != nil {
 		return ContainerState{}, err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	found, err := cli.FindContainerByName(ctx, spec.Name)
 	if err == nil {
@@ -511,7 +511,7 @@ func (b sdkBackend) RemoveContainer(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	found, err := cli.FindContainerByName(ctx, name)
 	if err != nil {
@@ -528,7 +528,7 @@ func (b sdkBackend) RemoveNetwork(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
+	defer func() { _ = cli.Close() }()
 
 	found, err := sdknetwork.FindByName(ctx, name, sdknetwork.WithListClient(cli))
 	if err != nil {
@@ -558,7 +558,7 @@ func (ephemeralPortAllocator) Allocate(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, fmt.Errorf("unexpected listener address %q", listener.Addr().String())

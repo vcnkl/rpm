@@ -161,7 +161,7 @@ func TestGraph_TopologicalSort(t *testing.T) {
 				g := NewGraph()
 				g.AddTarget(&models.Target{Name: "app_build", BundleName: "core", Deps: []string{":lib_build"}})
 				g.AddTarget(&models.Target{Name: "lib_build", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			expectError: false,
@@ -243,7 +243,7 @@ func TestGraph_Ancestors(t *testing.T) {
 				g := NewGraph()
 				g.AddTarget(&models.Target{Name: "app", BundleName: "core", Deps: []string{":lib"}})
 				g.AddTarget(&models.Target{Name: "lib", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			targetID:          "core:app",
@@ -257,7 +257,7 @@ func TestGraph_Ancestors(t *testing.T) {
 				g.AddTarget(&models.Target{Name: "lib", BundleName: "core", Deps: []string{":base"}})
 				g.AddTarget(&models.Target{Name: "util", BundleName: "core"})
 				g.AddTarget(&models.Target{Name: "base", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			targetID:          "core:app",
@@ -311,7 +311,7 @@ func TestGraph_Descendants(t *testing.T) {
 				g := NewGraph()
 				g.AddTarget(&models.Target{Name: "app", BundleName: "core", Deps: []string{":lib"}})
 				g.AddTarget(&models.Target{Name: "lib", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			targetID:            "core:lib",
@@ -324,7 +324,7 @@ func TestGraph_Descendants(t *testing.T) {
 				g.AddTarget(&models.Target{Name: "app1", BundleName: "core", Deps: []string{":lib"}})
 				g.AddTarget(&models.Target{Name: "app2", BundleName: "core", Deps: []string{":lib"}})
 				g.AddTarget(&models.Target{Name: "lib", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			targetID:            "core:lib",
@@ -370,7 +370,7 @@ func TestGraph_SubgraphFor(t *testing.T) {
 				g.AddTarget(&models.Target{Name: "lib", BundleName: "core", Deps: []string{":base"}})
 				g.AddTarget(&models.Target{Name: "base", BundleName: "core"})
 				g.AddTarget(&models.Target{Name: "other", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			ids:           []string{"core:app"},
@@ -383,7 +383,7 @@ func TestGraph_SubgraphFor(t *testing.T) {
 				g.AddTarget(&models.Target{Name: "a", BundleName: "core", Deps: []string{":shared"}})
 				g.AddTarget(&models.Target{Name: "b", BundleName: "core", Deps: []string{":shared"}})
 				g.AddTarget(&models.Target{Name: "shared", BundleName: "core"})
-				g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
+				_ = g.Resolve(map[string]*models.Bundle{"core": {Name: "core"}})
 				return g
 			},
 			ids:           []string{"core:a", "core:b"},

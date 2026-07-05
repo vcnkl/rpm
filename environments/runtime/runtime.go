@@ -571,10 +571,10 @@ func (s *LineEventSink) Emit(event Event) {
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
-		fmt.Fprintln(w, `{"type":"event_error","error":`+strconvQuote(err.Error())+`}`)
+		_, _ = fmt.Fprintln(w, `{"type":"event_error","error":`+strconvQuote(err.Error())+`}`)
 		return
 	}
-	fmt.Fprintln(w, string(data))
+	_, _ = fmt.Fprintln(w, string(data))
 }
 
 type PrefixWriter struct {
@@ -849,7 +849,7 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err

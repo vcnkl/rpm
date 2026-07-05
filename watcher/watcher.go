@@ -49,7 +49,7 @@ func (w *Watcher) OnChange(fn func(path string)) {
 }
 
 func (w *Watcher) Start(ctx context.Context) error {
-	defer w.fsw.Close()
+	defer func() { _ = w.fsw.Close() }()
 
 	for _, path := range w.paths {
 		if err := w.addRecursive(path); err != nil {
@@ -90,7 +90,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 				if event.Op&fsnotify.Create != 0 {
 					info, err := os.Stat(event.Name)
 					if err == nil && info.IsDir() {
-						w.addRecursive(event.Name)
+						_ = w.addRecursive(event.Name)
 					}
 				}
 			case err, ok := <-w.fsw.Errors:
@@ -117,7 +117,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 }
 
 func (w *Watcher) Stop() {
-	w.fsw.Close()
+	_ = w.fsw.Close()
 }
 
 func (w *Watcher) addRecursive(root string) error {

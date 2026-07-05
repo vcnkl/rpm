@@ -418,7 +418,7 @@ func newPrompt(in io.Reader, out io.Writer) prompt {
 }
 
 func (p prompt) ask(label string) (string, error) {
-	fmt.Fprintf(p.out, "%s: ", label)
+	_, _ = fmt.Fprintf(p.out, "%s: ", label)
 	if !p.scanner.Scan() {
 		return "", p.scanner.Err()
 	}
@@ -472,7 +472,7 @@ func (p prompt) chooseTargets(targets []*models.Target, selected []string) ([]st
 	}
 	choices := runnableTargets(targets)
 	for i, target := range choices {
-		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
+		_, _ = fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
 	}
 	answer, err := p.ask("Targets (comma-separated numbers or refs)")
 	if err != nil {
@@ -524,7 +524,7 @@ func (p prompt) chooseBeforeTargets(targets []*models.Target, mainRefs []string,
 		return choices[i].ID() < choices[j].ID()
 	})
 	for i, target := range choices {
-		fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
+		_, _ = fmt.Fprintf(p.out, "%d) %s\n", i+1, target.ID())
 	}
 	answer, err := p.askDefault("Run before targets (comma-separated numbers or refs)", strings.Join(selected, ","))
 	if err != nil {

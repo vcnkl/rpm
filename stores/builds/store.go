@@ -84,21 +84,21 @@ func (s *Store) Save() error {
 	tmpPath := tmp.Name()
 
 	if _, err = tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to write builds file %s: %w", tmpPath, err)
 	}
 	if err = tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to close builds file %s: %w", tmpPath, err)
 	}
 	if err = os.Chmod(tmpPath, 0644); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to set builds file permissions: %w", err)
 	}
 
 	if err = os.Rename(tmpPath, s.path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to rename builds file: %w", err)
 	}
 
