@@ -2,6 +2,8 @@
 
 Simple language-agnostic build and test tool with a development runtime for monorepos.
 
+![TUI demo](https://github.com/vcnkl/rpm/raw/main/docs/media/tui-demo.gif "Dev runtime TUI demo")
+
 ## Install
 
 ```shell
