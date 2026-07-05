@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/vcnkl/rpm/cmd"
+	"github.com/vcnkl/rpm/version"
 )
 
 func TestNewAppRegistersEnvCommand(t *testing.T) {
@@ -16,4 +17,10 @@ func TestNewAppRegistersEnvCommand(t *testing.T) {
 	require.NotNil(t, env)
 	assert.Equal(t, "env", env.Name)
 	assert.Nil(t, app.Command("dev"))
+}
+
+func TestNewAppUsesInjectedVersion(t *testing.T) {
+	app := cmd.NewApp()
+
+	assert.Equal(t, version.Version, app.Version)
 }

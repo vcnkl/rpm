@@ -4,6 +4,7 @@ import (
 	"runtime"
 
 	"github.com/vcnkl/rpm/cmd/subcmds"
+	"github.com/vcnkl/rpm/version"
 
 	"github.com/urfave/cli/v2"
 )
@@ -12,7 +13,7 @@ func NewApp() *cli.App {
 	return &cli.App{
 		Name:    "rpm",
 		Usage:   "Repo Manager v2 - Build orchestration for monorepos",
-		Version: "2.0.0",
+		Version: version.Version,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:    "debug",
