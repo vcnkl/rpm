@@ -545,6 +545,8 @@ func TestValidateDependencyImage(t *testing.T) {
 		{image: "postgres:16", valid: true},
 		{image: "library/postgres:16", valid: true},
 		{image: "ghcr.io/org/service:2026.05.30", valid: true},
+		{image: "postgres@sha256:0000000000000000000000000000000000000000000000000000000000000000", valid: true},
+		{image: "postgres:16@sha256:0000000000000000000000000000000000000000000000000000000000000000", valid: true},
 		{image: "postgres", valid: false},
 		{image: "library/postgres", valid: false},
 		{image: "ghcr.io/org/service", valid: false},

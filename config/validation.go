@@ -125,11 +125,10 @@ func ValidateDependencyImage(image string) error {
 	if err != nil {
 		return errors.Wrapf(ErrInvalidDependency, "invalid dependency image %q", image)
 	}
-	if _, ok := named.(reference.Tagged); !ok {
-		return errors.Wrapf(ErrInvalidDependency, "dependency image %q must include a tag", image)
-	}
-	if _, ok := named.(reference.Digested); ok {
-		return errors.Wrapf(ErrInvalidDependency, "dependency image %q must not use digest syntax", image)
+	_, tagged := named.(reference.Tagged)
+	_, digested := named.(reference.Digested)
+	if !tagged && !digested {
+		return errors.Wrapf(ErrInvalidDependency, "dependency image %q must be pinned by tag or digest", image)
 	}
 	return nil
 }
