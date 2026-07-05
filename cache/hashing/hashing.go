@@ -51,10 +51,27 @@ func HashInputs(repoRoot string, bundleRoot string, patterns []string) (string, 
 		if err != nil {
 			return "", err
 		}
+
+		rel, err := filepath.Rel(repoRoot, file)
+		if err != nil {
+			rel = file
+		}
+		h.Write([]byte(rel))
+		h.Write([]byte{0})
 		h.Write([]byte(fileHash))
+		h.Write([]byte{0})
 	}
 
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func CombineHash(components ...string) string {
+	h := sha256.New()
+	for _, component := range components {
+		h.Write([]byte(component))
+		h.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 func ExpandGlob(pattern string) ([]string, error) {

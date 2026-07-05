@@ -11,6 +11,7 @@ import (
 	"github.com/vcnkl/rpm/logger"
 	"github.com/vcnkl/rpm/models"
 	"github.com/vcnkl/rpm/stores/builds"
+	"github.com/vcnkl/rpm/version"
 )
 
 type BuildAction struct {
@@ -30,7 +31,7 @@ func NewBuildAction(cfg *config.Config, graph *dag.Graph, store *builds.Store, l
 		config:    cfg,
 		graph:     graph,
 		store:     store,
-		validator: builds.NewValidator(cfg.RepoRoot(), store),
+		validator: builds.NewValidator(cfg.RepoRoot(), cfg.Repo().Shell, version.Version, store),
 		log:       log,
 		parallel:  parallel,
 		force:     force,

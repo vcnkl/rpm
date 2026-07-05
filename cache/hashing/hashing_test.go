@@ -274,6 +274,39 @@ func TestHashInputs_ChangesOnFileModification(t *testing.T) {
 	assert.NotEqual(t, hash1, hash2)
 }
 
+func TestHashInputs_PathSensitive(t *testing.T) {
+	setup := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for path, content := range files {
+			fullPath := filepath.Join(dir, path)
+			require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+			require.NoError(t, os.WriteFile(fullPath, []byte(content), 0644))
+		}
+		return dir
+	}
+
+	dirA := setup(t, map[string]string{"src/a.go": "alpha", "src/b.go": "beta"})
+	dirB := setup(t, map[string]string{"src/a.go": "beta", "src/b.go": "alpha"})
+
+	hashA, err := HashInputs(dirA, dirA, []string{"src/*.go"})
+	require.NoError(t, err)
+
+	hashB, err := HashInputs(dirB, dirB, []string{"src/*.go"})
+	require.NoError(t, err)
+
+	assert.NotEqual(t, hashA, hashB, "swapping contents between filenames must change the hash")
+}
+
+func TestCombineHash(t *testing.T) {
+	base := CombineHash("a", "b", "c")
+
+	assert.Contains(t, base, "sha256:")
+	assert.Equal(t, base, CombineHash("a", "b", "c"))
+	assert.NotEqual(t, base, CombineHash("a", "c", "b"))
+	assert.NotEqual(t, base, CombineHash("ab", "c"))
+}
+
 func TestExpandGlob(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -13,14 +13,14 @@ import (
 
 func TestNewValidator(t *testing.T) {
 	store := NewStore("")
-	v := NewValidator("/repo", store)
+	v := NewValidator("/repo", "/bin/sh", "test", store)
 	assert.NotNil(t, v)
 	assert.Equal(t, "/repo", v.repoRoot)
 	assert.Equal(t, store, v.store)
 }
 
 func TestValidator_ResolveOutputPath(t *testing.T) {
-	v := NewValidator("/repo", NewStore(""))
+	v := NewValidator("/repo", "/bin/sh", "test", NewStore(""))
 
 	tests := []struct {
 		name       string
@@ -138,7 +138,7 @@ func TestValidator_OutputsExist(t *testing.T) {
 				require.NoError(t, os.WriteFile(fullPath, []byte("content"), 0644))
 			}
 
-			v := NewValidator(tmpDir, NewStore(""))
+			v := NewValidator(tmpDir, "/bin/sh", "test", NewStore(""))
 			target := &models.Target{
 				BundlePath: bundlePath,
 				Out:        tt.outputs,
@@ -218,7 +218,7 @@ func TestValidator_ShouldBuild(t *testing.T) {
 			}
 
 			if tt.cachedHash == "MATCH" {
-				v := NewValidator(tmpDir, store)
+				v := NewValidator(tmpDir, "/bin/sh", "test", store)
 				shouldBuild, hash, _ := v.ShouldBuild(target)
 				_ = shouldBuild
 				store.Set(target.ID(), &Entry{InputHash: hash})
@@ -226,7 +226,7 @@ func TestValidator_ShouldBuild(t *testing.T) {
 				store.Set(target.ID(), &Entry{InputHash: tt.cachedHash})
 			}
 
-			v := NewValidator(tmpDir, store)
+			v := NewValidator(tmpDir, "/bin/sh", "test", store)
 			shouldBuild, _, err := v.ShouldBuild(target)
 
 			if tt.expectHashError {
@@ -235,6 +235,63 @@ func TestValidator_ShouldBuild(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, tt.expectedBuild, shouldBuild)
 			}
+		})
+	}
+}
+
+func TestValidator_ShouldBuild_ConfigSensitivity(t *testing.T) {
+	baseTarget := func() *models.Target {
+		return &models.Target{
+			Name:       "app_build",
+			BundleName: "core",
+			BundlePath: "internal/core",
+			In:         []string{"src/*.go"},
+			Env:        map[string]string{"MODE": "release"},
+			Cmd:        "go build ./...",
+			Config:     models.TargetConfig{WorkingDir: "internal/core"},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		shell       string
+		toolVersion string
+		mutate      func(*models.Target)
+	}{
+		{name: "changed command", shell: "/bin/sh", toolVersion: "test", mutate: func(t *models.Target) { t.Cmd = "go build -race ./..." }},
+		{name: "changed env value", shell: "/bin/sh", toolVersion: "test", mutate: func(t *models.Target) { t.Env = map[string]string{"MODE": "debug"} }},
+		{name: "changed working dir", shell: "/bin/sh", toolVersion: "test", mutate: func(t *models.Target) { t.Config.WorkingDir = "internal/other" }},
+		{name: "changed deps", shell: "/bin/sh", toolVersion: "test", mutate: func(t *models.Target) { t.Deps = []string{"core:lib_build"} }},
+		{name: "changed shell", shell: "/bin/bash", toolVersion: "test", mutate: func(t *models.Target) {}},
+		{name: "changed tool version", shell: "/bin/sh", toolVersion: "next", mutate: func(t *models.Target) {}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			srcDir := filepath.Join(tmpDir, "internal/core/src")
+			require.NoError(t, os.MkdirAll(srcDir, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main"), 0644))
+
+			store := NewStore("")
+			baseline := NewValidator(tmpDir, "/bin/sh", "test", store)
+			target := baseTarget()
+
+			_, hash, err := baseline.ShouldBuild(target)
+			require.NoError(t, err)
+			store.Set(target.ID(), &Entry{InputHash: hash})
+
+			shouldBuild, _, err := baseline.ShouldBuild(target)
+			require.NoError(t, err)
+			require.False(t, shouldBuild, "baseline target must be cached before mutation")
+
+			mutated := baseTarget()
+			tt.mutate(mutated)
+			changed := NewValidator(tmpDir, tt.shell, tt.toolVersion, store)
+
+			shouldBuild, _, err = changed.ShouldBuild(mutated)
+			require.NoError(t, err)
+			assert.True(t, shouldBuild, "changing build configuration must invalidate the cache")
 		})
 	}
 }

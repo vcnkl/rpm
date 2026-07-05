@@ -3,6 +3,7 @@ package builds
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vcnkl/rpm/cache/hashing"
@@ -11,24 +12,30 @@ import (
 )
 
 type Validator struct {
-	repoRoot string
-	store    *Store
+	repoRoot    string
+	shell       string
+	toolVersion string
+	store       *Store
 }
 
-func NewValidator(repoRoot string, store *Store) *Validator {
+func NewValidator(repoRoot, shell, toolVersion string, store *Store) *Validator {
 	return &Validator{
-		repoRoot: repoRoot,
-		store:    store,
+		repoRoot:    repoRoot,
+		shell:       shell,
+		toolVersion: toolVersion,
+		store:       store,
 	}
 }
 
 func (v *Validator) ShouldBuild(target *models.Target) (bool, string, error) {
 	bundleRoot := filepath.Join(v.repoRoot, target.BundlePath)
 
-	currentHash, err := hashing.HashInputs(v.repoRoot, bundleRoot, target.In)
+	filesHash, err := hashing.HashInputs(v.repoRoot, bundleRoot, target.In)
 	if err != nil {
-		return true, currentHash, err
+		return true, filesHash, err
 	}
+
+	currentHash := v.compositeHash(target, filesHash)
 
 	entry, ok := v.store.Get(target.ID())
 	if !ok {
@@ -44,6 +51,34 @@ func (v *Validator) ShouldBuild(target *models.Target) (bool, string, error) {
 	}
 
 	return false, currentHash, nil
+}
+
+func (v *Validator) compositeHash(target *models.Target, filesHash string) string {
+	return hashing.CombineHash(
+		filesHash,
+		target.Cmd,
+		v.shell,
+		v.toolVersion,
+		target.Config.WorkingDir,
+		joinSortedEnv(target.Env),
+		joinSorted(target.Deps),
+		joinSorted(target.Out),
+	)
+}
+
+func joinSortedEnv(env map[string]string) string {
+	pairs := make([]string, 0, len(env))
+	for name, value := range env {
+		pairs = append(pairs, name+"="+value)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, "\n")
+}
+
+func joinSorted(values []string) string {
+	sorted := append([]string(nil), values...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "\n")
 }
 
 func (v *Validator) outputsExist(target *models.Target) bool {
