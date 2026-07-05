@@ -6,6 +6,17 @@ BINARY="rpm"
 INSTALL_DIR="${HOME}/bin"
 
 main() {
+    skip_verify="${RPM_SKIP_VERIFY:-0}"
+    for arg in "$@"; do
+        case "$arg" in
+            --skip-verify) skip_verify=1 ;;
+            *)
+                echo "Error: unknown argument: $arg" >&2
+                exit 1
+                ;;
+        esac
+    done
+
     os=$(detect_os)
     arch=$(detect_arch)
 
@@ -30,13 +41,12 @@ main() {
     trap 'rm -rf "$tmp_dir"' EXIT
 
     echo "Downloading ${download_url}..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$download_url" -o "${tmp_dir}/archive.tar.gz"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q "$download_url" -O "${tmp_dir}/archive.tar.gz"
+    download_file "$download_url" "${tmp_dir}/archive.tar.gz"
+
+    if [ "$skip_verify" = "1" ]; then
+        echo "Skipping checksum verification (--skip-verify)."
     else
-        echo "Error: curl or wget is required" >&2
-        exit 1
+        verify_checksum "$tmp_dir" "$version" "$archive_name"
     fi
 
     echo "Extracting..."
@@ -54,6 +64,58 @@ main() {
         echo "Add ${INSTALL_DIR} to your PATH:"
         echo "  export PATH=\"\$HOME/bin:\$PATH\""
     fi
+}
+
+download_file() {
+    url="$1"
+    out="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$out"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$url" -O "$out"
+    else
+        echo "Error: curl or wget is required" >&2
+        exit 1
+    fi
+}
+
+verify_checksum() {
+    tmp_dir="$1"
+    version="$2"
+    archive_name="$3"
+
+    echo "Verifying checksum..."
+    checksums_url="https://github.com/${REPO}/releases/download/${version}/checksums.txt"
+    if ! download_file "$checksums_url" "${tmp_dir}/checksums.txt"; then
+        echo "Error: failed to download checksums.txt for verification" >&2
+        echo "Re-run with --skip-verify to bypass (not recommended)." >&2
+        exit 1
+    fi
+
+    expected=$(awk -v name="$archive_name" '$2 == name {print $1}' "${tmp_dir}/checksums.txt")
+    if [ -z "$expected" ]; then
+        echo "Error: no checksum listed for ${archive_name}" >&2
+        exit 1
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "${tmp_dir}/archive.tar.gz" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "${tmp_dir}/archive.tar.gz" | awk '{print $1}')
+    else
+        echo "Error: sha256sum or shasum is required to verify the download" >&2
+        echo "Re-run with --skip-verify to bypass (not recommended)." >&2
+        exit 1
+    fi
+
+    if [ "$expected" != "$actual" ]; then
+        echo "Error: checksum mismatch for ${archive_name}" >&2
+        echo "  expected: ${expected}" >&2
+        echo "  actual:   ${actual}" >&2
+        exit 1
+    fi
+
+    echo "Checksum verified."
 }
 
 detect_os() {
@@ -87,4 +149,4 @@ get_latest_version() {
     fi
 }
 
-main
+main "$@"
