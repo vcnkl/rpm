@@ -56,18 +56,27 @@ func (a *BuildAction) Execute(ctx context.Context, targetIDs []string) (*models.
 	})
 
 	for id, err := range results {
-		if err != nil {
+		switch {
+		case err != nil:
 			result.Failed = append(result.Failed, models.FailedTarget{
 				ID:    id,
 				Error: err,
 			})
-		} else {
+		case a.wasRebuilt(id):
 			result.Executed = append(result.Executed, id)
+		default:
+			result.Skipped = append(result.Skipped, id)
 		}
 	}
 
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+func (a *BuildAction) wasRebuilt(id string) bool {
+	a.rebuiltMu.RLock()
+	defer a.rebuiltMu.RUnlock()
+	return a.rebuilt[id]
 }
 
 func (a *BuildAction) buildTarget(ctx context.Context, node *dag.Node) error {
