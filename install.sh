@@ -7,14 +7,28 @@ INSTALL_DIR="${HOME}/bin"
 
 main() {
     skip_verify="${RPM_SKIP_VERIFY:-0}"
-    for arg in "$@"; do
-        case "$arg" in
+    while [ $# -gt 0 ]; do
+        case "$1" in
             --skip-verify) skip_verify=1 ;;
+            --dir*)
+                dir="${1#--dir}"
+                dir="${dir#=}"
+                if [ -z "$dir" ]; then
+                    shift
+                    dir="$1"
+                fi
+                if [ -z "$dir" ]; then
+                    echo "Error: --dir requires an argument" >&2
+                    exit 1
+                fi
+                INSTALL_DIR="$dir"
+                ;;
             *)
-                echo "Error: unknown argument: $arg" >&2
+                echo "Error: unknown argument: $1" >&2
                 exit 1
                 ;;
         esac
+        shift
     done
 
     os=$(detect_os)
@@ -62,7 +76,7 @@ main() {
     if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
         echo ""
         echo "Add ${INSTALL_DIR} to your PATH:"
-        echo "  export PATH=\"\$HOME/bin:\$PATH\""
+        echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
     fi
 }
 
