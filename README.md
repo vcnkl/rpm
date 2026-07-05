@@ -1,164 +1,140 @@
 # RPM (Repo Manager)
 
-Language-agnostic build orchestration and local environment runtime for monorepos.
+Simple language-agnostic build and test tool with a development runtime for monorepos.
 
-## Command Model
-
-RPM has a clear split between build/test/run orchestration and environment runtime orchestration:
-
-- `rpm build` builds filesystem-output targets only.
-- `rpm env create`, `rpm env render` and `rpm env up` handle local environment workflows.
-- Target suffixes are ordinary target name text; environment membership comes from explicit blueprint target refs.
-- Environment containers are runtime dependencies declared once in `repo.yml` and referenced by name from bundles.
-
-## Installation
+## Install
 
 ```shell
 wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
 ```
 
-## Configuration
+Recommended to check `.rpm/envs` into version control and ignore `.rpm/cache`.
 
-### Global (repo.yml)
+## Commands
+
+| Command                                | Flags                                   | Description                                         |
+|----------------------------------------|-----------------------------------------|-----------------------------------------------------|
+| `rpm init`                             | -                                       | Run `init` checks and install steps, create `.rpm/` |
+| `rpm build [bundle\|bundle:target]...` | `--force`, `--affected`, `--dry-run`    | Build `*_build` targets                             |
+| `rpm test [bundle\|bundle:target]...`  | `--affected`, `--coverage`              | Run `*_test` targets                                |
+| `rpm run <bundle:target>`              | -                                       | Run target                                          |
+| `rpm graph [target]`                   | `--format text\|json\|dot`, `--reverse` | Print dependency graph                              |
+
+Global flags: `-d/--debug`, `-c/--config <path>` and `-j/--jobs <n>`
+
+## repo.yml
+
+Repo config options
+
+| Key                        | Type   | Default   | Description                                                                                                                  |
+|----------------------------|--------|-----------|------------------------------------------------------------------------------------------------------------------------------|
+| `project.name`             | string | -         | Required. Used for generated resource names                                                                                  |
+| `shell`                    | string | `/bin/sh` | Shell used for all commands                                                                                                  |
+| `env.vars`                 | map    | -         | Environment variables applied to all commands                                                                                |
+| `env.deps`                 | list   | -         | Docker dependencies                                                                                                          |
+| `env.deps[].name`          | string | -         | Unique name referenced by bundles and blueprints                                                                             |
+| `env.deps[].image`         | string | -         | `image:tag`                                                                                                                  |
+| `env.deps[].env`           | map    | -         | Container environment                                                                                                        |
+| `env.deps[].ports`         | list   | -         | Publishes an ephemeral host port and injects `<NAME>_PORT`. Use `VAR=port` to set a custom name in your target dotenv files. |
+| `env.deps[].volumes`       | list   | -         | Container data paths - volume names are generated to prevent conflicts                                                       |
+| `env.deps[].readiness-cmd` | string | -         | Must exit zero before targets start                                                                                          |
+| `init`                     | list   | -         | Steps with `label`, `check_cmd` and `install_cmd` run by `rpm init`                                                          |
+| `ignore`                   | list   | -         | Bundle path globs to ignore globally (good idea to ignore build directories here)                                            |
+| `logger.datetime.format`   | string | `RFC3339` | Go time layout for log timestamps                                                                                            |
 
 ```yaml
 project:
-  name: 'my-project'          # Required; used for generated runtime resource names
-shell: '/usr/bin/env bash'    # Default shell for commands
+  name: local-stack
+shell: /usr/bin/env bash
 env:
-  vars:                       # Global environment variables
-    PROJECT: 'my-project'
-  deps:                       # Docker runtime dependencies available to bundles
+  vars:
+    APP_ENV: local
+  deps:
     - name: postgres
-      image: postgres:16
+      image: postgres:18
       env:
-        POSTGRES_PASSWORD: example
+        POSTGRES_PASSWORD: postgres
       ports:
-        - "5432"                  # Publishes an ephemeral host port; injects POSTGRES_PORT
-      volumes:                # Container data paths only; Docker volume names are generated
+        - "POSTGRES_PASS=5432"
+      volumes:
         - /var/lib/postgresql/data
       readiness-cmd: |
-        timeout 90s bash -c "until docker exec ${DOCKER_CONTAINER_NAME} pg_isready; do sleep 5; done"
+        timeout 90 sh -c 'until docker exec "$DOCKER_CONTAINER_NAME" pg_isready -q; do sleep 1; done'
     - name: redis
-      image: redis:7
-logger:
-  datetime:
-    format: '2006-01-02T15:04:05Z07:00' # Go time layout for rpm log timestamps
-init:                         # External dependencies to check/install
-  - label: node
-    check_cmd: 'node --version'
-    install_cmd: 'nvm install 20'
-ignore:
-  - 'path/to/ignored/bundle/*'
+      image: redis:8.8.0
+      ports:
+        - "6379"
 ```
 
-### Bundles (rpm.yml)
+## rpm.yml
+
+Bundle config options
+
+| Key                               | Type           | Default | Description                                               |
+|-----------------------------------|----------------|---------|-----------------------------------------------------------|
+| `name`                            | string         | -       | Bundle name                                               |
+| `env.variables`                   | map            | -       | Environment variables applied to all targets              |
+| `env.deps`                        | list           | -       | Dependency names from `repo.yml`, started by `rpm env up` |
+| `targets[].name`                  | string         | -       | Target name                                               |
+| `targets[].cmd`                   | string or list | -       | Command to run                                            |
+| `targets[].deps`                  | list           | -       | Targets that must return a zero exit code before running  |
+| `targets[].in`                    | list           | -       | Input globs hashed for cache keys                         |
+| `targets[].out`                   | list           | -       | Output paths that must exist for a cache hit              |
+| `targets[].env`                   | map            | -       | Environment variables applied to target                   |
+| `targets[].config.working_dir`    | string         | `local` | `local`, `repo_root` or a relative path                   |
+| `targets[].config.reload`         | bool           | `true`  | Restart on file change under `rpm env up`                 |
+| `targets[].config.ignore`         | list           | -       | Ignored globs for file watcher                            |
+| `targets[].config.index`          | int            | -       | Before target order under `rpm env up`                    |
+| `targets[].config.dotenv.enabled` | bool           | `true`  | Load `.env` from the working dir                          |
+| `targets[].config.dotenv.files`   | list           | -       | Additional dotenv files                                   |
 
 ```yaml
-name: my-service              # Bundle name (used in target IDs)
-env:                          # Environment-related bundle configuration
-  variables:                  # Bundle-level environment variables
-    SERVICE_PORT: '8080'
-targets:
-  - name: build               # Target name → ID becomes "my-service:build"
-    deps:                     # Dependencies (other targets)
-      - common:codegen
-    in:                       # Input files/globs for cache key
-      - '**/*.go'
-      - 'go.mod'
-    out:                      # Output files to check for cache validity
-      - '.build/my-service'
-    env:                      # Target-level environment variables
-      CGO_ENABLED: '1'
-    cmd: 'go build -o .build/my-service .'
-    config:
-      working_dir: 'local'    # 'local' (bundle dir), 'repo_root', or relative path
-      index: 1                # Optional before-target ordering hint for rpm env up
-      dotenv:
-        enabled: true         # Load .env from bundle directory
-      reload: true            # Environment runtime reloads on file changes
-      ignore:                 # Environment runtime ignore patterns
-        - 'tmp'
-        - '*.log'
-```
-
-Bundle environment dependency requirements are declared under `env.deps` as names that must exist in top-level `repo.yml` `env.deps`. They are only used by `rpm env up`; they are not build outputs and do not participate in build cache validation.
-
-```yaml
-name: api
+name: products
 env:
+  variables:
+    SERVICE: products
   deps:
     - postgres
     - redis
 targets:
-  - name: echo-123
-    cmd: go run .
+  - name: build
+    cmd: go build -o .build/web .
+    in:
+      - "**/*.go"
+    out:
+      - .build/web
+  - name: web_serve
+    cmd: ./web_serve.sh
+    config:
+      working_dir: local
+      reload: true
 ```
 
-## Usage
+## Environments
 
-### Build
-```bash
-rpm build [targets...]              # Build specific targets
-rpm build                           # Build all *_build targets
-rpm build --force core              # Force rebuild (ignore cache)
-rpm build --dry-run core            # Show what would be built
-rpm build -j 4 core                 # Limit parallel jobs
-```
-
-### Test
-```bash
-rpm test [targets...]               # Run specific test targets
-rpm test                            # Run all *_test targets
-```
-
-### Run target
-```bash
-rpm run <target>                    # Run any target by exact ID
-rpm run core:migrate                # Example: run migration target
-```
-
-### Init
-```bash
-rpm init                            # Initialize .rpm directory, run `init` scripts and validate config
-```
-
-### Show dependency graph
-```bash
-rpm graph [target]                  # Show dependency graph
-```
-
-### Env
-```bash
-rpm env create [blueprint] --target bundle:target
-rpm env create [blueprint] --target bundle:target --before bundle:target
-rpm env edit <blueprint> --add-target bundle:target --add-before bundle:target
-rpm env validate <blueprint>
-rpm env render <blueprint> [--out path]
-rpm env up <blueprint> [--non-interactive] [--no-reload] [--no-deps]
-rpm env down <blueprint>  # or enter `q` to quit interactive session
-rpm env prune <blueprint>
-```
-
-Blueprint files:
-- `.rpm/envs/<name>/config.yml`.
-- `.rpm/envs/<name>/runtime.gen.star`.
+| Command                   | Flags                                                                | Description                 |
+|---------------------------|----------------------------------------------------------------------|-----------------------------|
+| `rpm env create <name>`   | `--target ref`, `--before ref`                                       | Create a blueprint          |
+| `rpm env edit <name>`     | `--add-target`, `--remove-target`, `--add-before`, `--remove-before` | Change refs                 |
+| `rpm env validate <name>` | -                                                                    | Validate all refs resolve   |
+| `rpm env render <name>`   | `--out path`                                                         | Generate `runtime.gen.star` |
+| `rpm env up <name>`       | `--no-reload`, `--no-deps`, `--non-interactive`                      | Start                       |
+| `rpm env down <name>`     | -                                                                    | Stop                        |
+| `rpm env prune <name>`    | -                                                                    | Remove cached resources     |
 
 ```yaml
 version: 1
 name: local-stack
 live_reload:
   enabled: true
-  debounce: 100ms
+  debounce: 200ms
 before:
-  - go-app:migrate
+  - products:migrate-pg
 targets:
-  - ref: go-app:echo-123
+  - ref: products:web_serve
     reload: true
-    env:
-      APP_PORT: "8080"
-  - ref: ts-app:web
-    reload: true
+  - ref: products:grpc_serve
+    reload: false
 dependencies:
   enabled: true
   include:
@@ -169,39 +145,6 @@ variables:
   LOG_LEVEL: debug
 ```
 
-## Global Flags
+## Environment variables
 
-- `--debug, -d`: Enable debug logging
-- `--config, -c`: Path to repo.yml (default: auto-detect via git root)
-- `--jobs, -j`: Max parallel jobs (default: NumCPU)
-
-## Environment Variables
-
-Composed in order (later overrides earlier):
-1. System environment
-2. repo.yml `env`
-3. `REPO_ROOT` (auto-set)
-4. `BUNDLE_ROOT` (auto-set)
-5. Bundle `env`
-6. Target `env`
-7. Blueprint `variables`
-8. Blueprint target `env`
-9. `.env` file (if `config.dotenv.enabled`)
-
-## Caching
-
-- Input hash: SHA256 of all files matching `in` patterns
-- Generated state is stored under ignored `.rpm/cache/`, including build cache, DAG cache and generated Starlark.
-- Cache hit requires: same input hash + all `out` files exist
-- Dependency rebuild propagates to dependents
-
-## Environment Runtime
-
-- Target commands use the resolved working directory from `config.working_dir`.
-- Target environments compose values in this order: host env, repo env, `REPO_ROOT`, `BUNDLE_ROOT`, bundle env, target env, blueprint variables, blueprint target env and configured dotenv files.
-- Stack `before` target refs use the same target command, working directory, environment and dotenv behavior as normal targets.
-- Watch roots default to the bundle root or the target `in` patterns, and ignore entries come from target config.
-- `--no-reload` disables watchers at runtime without mutating the committed blueprint.
-- `--no-deps` skips dependency containers while still running targets.
-- Runtime dependencies use Docker CLI orchestration: network creation, volume creation, detached containers, container removal and network removal.
-- Runtime planning is intentionally modular: blueprint loading, normalized environment spec, Starlark generation, Starlark evaluation, runtime interfaces and the centralized `environments/tui` bridge are separate packages so future commands can compose them without changing blueprint semantics.
+Merged in the following order: host env, repo config `env.vars`, `REPO_ROOT`, `BUNDLE_ROOT`, bundle `env.variables`, target `env`, blueprint `variables`, blueprint target `env`, target dotenv files.
