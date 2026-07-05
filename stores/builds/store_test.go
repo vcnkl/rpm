@@ -1,6 +1,7 @@
 package builds
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -224,6 +225,51 @@ func TestStore_Save(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStore_ConcurrentSave(t *testing.T) {
+	const workers = 200
+	const rounds = 3
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "builds.json")
+	store := NewStore(path)
+
+	for round := 0; round < rounds; round++ {
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make(chan error, workers)
+
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				store.Set(fmt.Sprintf("core:target_%d", id), &Entry{InputHash: fmt.Sprintf("sha256:%d", id)})
+				<-start
+				if err := store.Save(); err != nil {
+					errs <- err
+				}
+			}(i)
+		}
+
+		close(start)
+		wg.Wait()
+		close(errs)
+
+		for err := range errs {
+			require.NoError(t, err)
+		}
+	}
+
+	leftovers, err := filepath.Glob(filepath.Join(tmpDir, "builds-*.json.tmp"))
+	require.NoError(t, err)
+	assert.Empty(t, leftovers, "no temp files should be left behind")
+
+	loaded := NewStore(path)
+	require.NoError(t, loaded.Load())
+	for i := 0; i < workers; i++ {
+		_, found := loaded.Get(fmt.Sprintf("core:target_%d", i))
+		assert.True(t, found, "entry %d must survive concurrent saves", i)
 	}
 }
 

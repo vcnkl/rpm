@@ -64,8 +64,8 @@ func (s *Store) Set(targetID string, entry *Entry) {
 }
 
 func (s *Store) Save() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -77,12 +77,28 @@ func (s *Store) Save() error {
 		return fmt.Errorf("failed to marshal builds: %w", err)
 	}
 
-	tmpPath := s.path + ".tmp"
-	if err = os.WriteFile(tmpPath, data, 0644); err != nil {
+	tmp, err := os.CreateTemp(dir, "builds-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temp builds file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err = tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write builds file %s: %w", tmpPath, err)
+	}
+	if err = tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close builds file %s: %w", tmpPath, err)
+	}
+	if err = os.Chmod(tmpPath, 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set builds file permissions: %w", err)
 	}
 
 	if err = os.Rename(tmpPath, s.path); err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("failed to rename builds file: %w", err)
 	}
 
