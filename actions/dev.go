@@ -146,10 +146,10 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 		defer cmdMu.Unlock()
 
 		if cmd != nil && cmd.Process != nil {
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 			time.Sleep(100 * time.Millisecond)
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			cmd.Wait()
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
 		}
 
 		targetLog.Info("starting...")
@@ -168,7 +168,7 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 		}
 
 		go func() {
-			cmd.Wait()
+			_ = cmd.Wait()
 		}()
 	}
 
@@ -179,9 +179,10 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 			return
 		}
 
-		if status == buildStatusRan {
+		switch status {
+		case buildStatusRan:
 			targetLog.Info("file changed, rebuilding...", logger.String("path", path))
-		} else if status == buildStatusNoop {
+		case buildStatusNoop:
 			targetLog.Info("file changed, restarting...", logger.String("path", path))
 		}
 
@@ -192,16 +193,16 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 	startCmd()
 
 	go func() {
-		w.Start(ctx)
+		_ = w.Start(ctx)
 	}()
 
 	<-ctx.Done()
 
 	cmdMu.Lock()
 	if cmd != nil && cmd.Process != nil {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmdMu.Unlock()
 
