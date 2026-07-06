@@ -117,15 +117,17 @@ type Options struct {
 }
 
 type Runner struct {
-	processes map[string]Process
-	plan      *envstarlark.RuntimePlan
-	done      chan processExit
-	mu        sync.Mutex
-	opts      Options
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	closing   chan struct{}
-	closeOnce sync.Once
+	processes  map[string]Process
+	plan       *envstarlark.RuntimePlan
+	done       chan processExit
+	mu         sync.Mutex
+	opts       Options
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	closing    chan struct{}
+	closeOnce  sync.Once
+	stopping   bool
+	restarting int
 }
 
 func NewRunner(opts Options) *Runner {
@@ -153,8 +155,20 @@ func (r *Runner) getPlan() *envstarlark.RuntimePlan {
 	return r.plan
 }
 
-func (r *Runner) shutdown() {
+func (r *Runner) shutdown(ctx context.Context) {
+	r.mu.Lock()
+	r.stopping = true
+	processes := make(map[string]Process, len(r.processes))
+	for ref, process := range r.processes {
+		processes[ref] = process
+	}
+	r.mu.Unlock()
 	r.closeOnce.Do(func() { close(r.closing) })
+	for _, ref := range sortedProcessRefs(processes) {
+		if process := processes[ref]; process != nil {
+			_ = process.Stop(ctx)
+		}
+	}
 	r.wg.Wait()
 }
 
@@ -169,7 +183,7 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	ctx, cancel := context.WithCancel(ctx)
 	r.setCancel(cancel)
 	defer cancel()
-	defer r.shutdown()
+	defer func() { r.shutdown(ctx) }()
 	r.declareUnits(plan)
 
 	startedDeps := false
@@ -244,7 +258,7 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	defer watchCancel()
 
 	for {
-		if r.activeCount() == 0 && recordedErr == nil {
+		if r.idle() && recordedErr == nil {
 			r.stopDependencies(ctx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return nil
@@ -357,10 +371,22 @@ type processExit struct {
 	err     error
 }
 
-func (r *Runner) activeCount() int {
+func (r *Runner) idle() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.processes)
+	return len(r.processes) == 0 && r.restarting == 0
+}
+
+func (r *Runner) beginRestart() {
+	r.mu.Lock()
+	r.restarting++
+	r.mu.Unlock()
+}
+
+func (r *Runner) endRestart() {
+	r.mu.Lock()
+	r.restarting--
+	r.mu.Unlock()
 }
 
 func (r *Runner) removeProcess(ref string, process Process) {
@@ -386,6 +412,7 @@ func (r *Runner) stopProcesses(ctx context.Context) {
 	for _, ref := range sortedProcessRefs(processes) {
 		if process := processes[ref]; process != nil {
 			_ = process.Stop(ctx)
+			r.removeProcess(ref, process)
 		}
 	}
 }
@@ -410,9 +437,14 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 		return err
 	}
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		_ = process.Stop(ctx)
+		return nil
+	}
 	r.processes[target.Ref] = process
-	r.mu.Unlock()
 	r.wg.Add(1)
+	r.mu.Unlock()
 	go func() {
 		defer r.wg.Done()
 		r.emitExit(processExit{ref: target.Ref, process: process, err: process.Wait()})
@@ -445,6 +477,8 @@ func (r *Runner) reloadTarget(ctx context.Context, plan *envstarlark.RuntimePlan
 	if !ok || !target.Reload {
 		return
 	}
+	r.beginRestart()
+	defer r.endRestart()
 	r.opts.EventSink.Emit(Event{Type: EventReloadStarted, Ref: ref, Path: path})
 	if process := r.processSnapshot()[ref]; process != nil {
 		_ = process.Stop(ctx)
