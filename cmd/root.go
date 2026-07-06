@@ -36,6 +36,7 @@ func NewApp() *cli.App {
 			subcmds.InitCmd(),
 			subcmds.BuildCmd(),
 			subcmds.TestCmd(),
+			subcmds.DevCmd(),
 			subcmds.EnvCmd(),
 			subcmds.RunCmd(),
 			subcmds.GraphCmd(),

@@ -295,8 +295,8 @@ func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {
 	assert.Zero(t, created.exitCode, created.output)
 
 	devHelp := runWorkspaceCommand(t, ctx, ctr, "rpm dev --help")
-	assert.NotZero(t, devHelp.exitCode, devHelp.output)
-	assert.Contains(t, strings.ToLower(devHelp.output), "no help topic")
+	assert.Zero(t, devHelp.exitCode, devHelp.output)
+	assert.Contains(t, strings.ToLower(devHelp.output), "file watching")
 
 	dockerBuild := runWorkspaceCommand(t, ctx, ctr, "rpm build --"+"docker")
 	assert.NotZero(t, dockerBuild.exitCode, dockerBuild.output)

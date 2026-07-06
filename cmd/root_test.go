@@ -16,7 +16,7 @@ func TestNewAppRegistersEnvCommand(t *testing.T) {
 	env := app.Command("env")
 	require.NotNil(t, env)
 	assert.Equal(t, "env", env.Name)
-	assert.Nil(t, app.Command("dev"))
+	assert.NotNil(t, app.Command("dev"))
 }
 
 func TestNewAppUsesInjectedVersion(t *testing.T) {

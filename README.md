@@ -2,7 +2,7 @@
 
 Simple language-agnostic build and test tool with a development runtime for monorepos.
 
-![TUI demo](https://github.com/vcnkl/rpm/raw/main/docs/media/tui-demo.gif "Dev runtime TUI demo")
+![TUI demo](https://github.com/vcnkl/rpm/raw/main/docs/media/tui-demo.gif "Env runtime TUI demo")
 
 ## Install
 
@@ -14,13 +14,15 @@ Recommended to check `.rpm/envs` into version control and ignore `.rpm/cache`.
 
 ## Commands
 
-| Command                                | Flags                                   | Description                                         |
-|----------------------------------------|-----------------------------------------|-----------------------------------------------------|
-| `rpm init`                             | -                                       | Run `init` checks and install steps, create `.rpm/` |
-| `rpm build [bundle\|bundle:target]...` | `--force`, `--affected`, `--dry-run`    | Build `*_build` targets                             |
-| `rpm test [bundle\|bundle:target]...`  | `--affected`, `--coverage`              | Run `*_test` targets                                |
-| `rpm run <bundle:target>`              | -                                       | Run target                                          |
-| `rpm graph [target]`                   | `--format text\|json\|dot`, `--reverse` | Print dependency graph                              |
+| Command                                    | Flags                                   | Description                                         |
+|--------------------------------------------|-----------------------------------------|-----------------------------------------------------|
+| `rpm init`                                 | -                                       | Run `init` checks and install steps, create `.rpm/` |
+| `rpm build [<bundle>\|<bundle:target>]...` | `--force`, `--affected`, `--dry-run`    | Build `*_build` targets                             |
+| `rpm test [<bundle>\|<bundle:target>]...`  | `--affected`, `--coverage`              | Run `*_test` targets                                |
+| `rpm run [<bundle:target>]`                | -                                       | Run target                                          |
+| `rpm env [<arg>]...`                       | See environments section below          | Run environment                                     |
+| `rpm dev [<bundle:target>]`                | `--dry-run`                             | Run development mode                                |
+| `rpm graph [<target>]`                     | `--format text\|json\|dot`, `--reverse` | Print dependency graph                              |
 
 Global flags: `-d/--debug`, `-c/--config <path>` and `-j/--jobs <n>`
 
