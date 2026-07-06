@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/vcnkl/rpm/config"
+	envconfig "github.com/vcnkl/rpm/environments/config"
 	"github.com/vcnkl/rpm/environments/generator"
 	"github.com/vcnkl/rpm/environments/metrics"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
@@ -202,17 +203,21 @@ func (a *EnvAction) resolvePlanReferences(plan *envstarlark.RuntimePlan) (*envst
 	if !planUsesConfigReferences(plan) {
 		return plan, nil
 	}
+	policy := models.DependencyPolicy{
+		Enabled: len(plan.Dependencies) > 0,
+		Include: dependencyRefs(plan.Dependencies),
+		Exclude: []string{},
+	}
+	if bp, err := envconfig.LoadBlueprint(a.config, plan.Environment.Name); err == nil {
+		policy = bp.DependencyPolicy
+	}
 	blueprint := &models.EnvironmentBlueprint{
-		Version:   1,
-		Name:      plan.Environment.Name,
-		Variables: plan.Environment.Variables,
-		Before:    beforeRefs(plan.BeforeTargets),
-		Targets:   planTargets(plan.Targets),
-		DependencyPolicy: models.DependencyPolicy{
-			Enabled: len(plan.Dependencies) > 0,
-			Include: dependencyRefs(plan.Dependencies),
-			Exclude: []string{},
-		},
+		Version:          1,
+		Name:             plan.Environment.Name,
+		Variables:        plan.Environment.Variables,
+		Before:           beforeRefs(plan.BeforeTargets),
+		Targets:          planTargets(plan.Targets),
+		DependencyPolicy: policy,
 		ReloadPolicy: models.ReloadPolicy{
 			Enabled:  plan.Environment.LiveReload.Enabled,
 			Debounce: plan.Environment.LiveReload.Debounce,

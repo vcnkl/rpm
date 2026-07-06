@@ -133,6 +133,9 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 			Env:  envVars(bundle.Env),
 		})
 		bundleSeen[bundle.Name] = true
+		if !blueprint.DependencyPolicy.Enabled {
+			return
+		}
 		for _, ref := range bundle.Dependencies {
 			if excludedDependencies[ref] {
 				continue

@@ -314,7 +314,7 @@ func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	assert.Equal(t, []string{"a:serve", "z:serve"}, []string{resolved.Targets[0].Ref, resolved.Targets[1].Ref})
 }
 
-func TestResolveIncludesBundleDependenciesWhenPolicyDisablesThem(t *testing.T) {
+func TestResolveOmitsBundleDependenciesWhenPolicyDisabled(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
 project:
@@ -340,7 +340,43 @@ env:
 		DependencyPolicy: models.DependencyPolicy{
 			Enabled: false,
 			Include: []string{},
-			Exclude: []string{"postgres", "redis"},
+			Exclude: []string{},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.Empty(t, resolved.Dependencies)
+}
+
+func TestResolveIncludesBundleDependenciesWhenPolicyEnabled(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+env:
+  deps:
+    - name: postgres
+      image: postgres:16
+    - name: redis
+      image: redis:7
+`), 0644))
+	writeBundleWithDependencies(t, repoRoot, "api", []string{"postgres"}, "serve", "migrate")
+	writeBundleWithDependencies(t, repoRoot, "worker", []string{"redis"}, "serve")
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:   "local",
+		Before: []string{"api:migrate"},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:serve", Env: map[string]string{}},
+			{Ref: "worker:serve", Env: map[string]string{}},
+		},
+		DependencyPolicy: models.DependencyPolicy{
+			Enabled: true,
+			Include: []string{},
+			Exclude: []string{},
 		},
 	}
 

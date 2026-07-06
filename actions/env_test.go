@@ -40,6 +40,16 @@ targets:
 `), 0644))
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 	require.NoError(t, os.MkdirAll(filepath.Dir(generator.CachePath(repo, "local")), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(generator.CachePath(repo, "local")), "config.yml"), []byte(`
+version: 1
+name: local
+before:
+  - api:migrate
+targets:
+  - ref: api:serve
+dependencies:
+  enabled: true
+`), 0644))
 	require.NoError(t, os.WriteFile(generator.CachePath(repo, "local"), []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
 rpm_before_target(ref = "api:migrate", config = "api/rpm.yml")
