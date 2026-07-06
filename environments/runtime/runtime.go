@@ -280,7 +280,9 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 			}
 		case exit := <-r.done:
 			if exit.ref != "" {
-				r.removeProcess(exit.ref, exit.process)
+				if !r.removeProcess(exit.ref, exit.process) {
+					continue
+				}
 				event := Event{Type: EventProcessExited, Ref: exit.ref}
 				if exit.err != nil {
 					event.Error = exit.err.Error()
@@ -389,12 +391,14 @@ func (r *Runner) endRestart() {
 	r.mu.Unlock()
 }
 
-func (r *Runner) removeProcess(ref string, process Process) {
+func (r *Runner) removeProcess(ref string, process Process) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.processes[ref] == process {
 		delete(r.processes, ref)
+		return true
 	}
+	return false
 }
 
 func (r *Runner) processSnapshot() map[string]Process {
@@ -754,7 +758,9 @@ func (r *Runner) waitForQuitAfterError(ctx context.Context, plan *envstarlark.Ru
 			if exit.ref == "" {
 				continue
 			}
-			r.removeProcess(exit.ref, exit.process)
+			if !r.removeProcess(exit.ref, exit.process) {
+				continue
+			}
 			event := Event{Type: EventProcessExited, Ref: exit.ref}
 			if exit.err != nil {
 				event.Error = exit.err.Error()

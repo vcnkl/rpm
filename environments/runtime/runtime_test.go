@@ -762,6 +762,54 @@ func TestControlActionRestartsSelectedTarget(t *testing.T) {
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
+func TestControlActionRestartDoesNotFlickerFailedWhenStopErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	processes := &fakeProcessRunner{
+		block:    true,
+		waitErrs: map[string]error{"api:serve": assert.AnError},
+	}
+	actions := make(chan envruntime.ControlAction, 1)
+	events := &eventRecorder{}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:  processes,
+		EventSink:      events,
+		ControlActions: actions,
+		NoDeps:         true,
+		NoReload:       true,
+		Interactive:    true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, testPlan())
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	actions <- envruntime.ControlAction{Type: envruntime.ActionRestartTarget, Ref: "api:serve"}
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2 && processes.stopCount("api:serve") == 1
+	}, time.Second, 10*time.Millisecond)
+
+	failedExit := func() bool {
+		for _, event := range events.byType(envruntime.EventProcessExited) {
+			if event.Ref == "api:serve" && event.Error != "" {
+				return true
+			}
+		}
+		return false
+	}
+	require.Never(t, failedExit, 200*time.Millisecond, 10*time.Millisecond)
+
+	cancel()
+	require.NoError(t, <-done)
+
+	reloads := events.byType(envruntime.EventReloadCompleted)
+	require.NotEmpty(t, reloads)
+	assert.Empty(t, reloads[len(reloads)-1].Error)
+}
+
 func TestControlActionStopsEnvironment(t *testing.T) {
 	processes := &fakeProcessRunner{block: true}
 	actions := make(chan envruntime.ControlAction, 1)
