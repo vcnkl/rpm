@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ type processSampler struct {
 	registry *Registry
 	usage    func(ctx context.Context, pid int32) (uint64, float64, bool)
 	now      func() time.Time
+	cores    int
 
 	mu       sync.Mutex
 	prevWall time.Time
@@ -24,6 +26,7 @@ func NewSampler(registry *Registry) Sampler {
 		registry: registry,
 		usage:    subtreeUsage,
 		now:      time.Now,
+		cores:    runtime.NumCPU(),
 		prevCPU:  make(map[string]float64),
 		prevPID:  make(map[string]int32),
 	}
@@ -38,6 +41,10 @@ func (s *processSampler) Sample(ctx context.Context) Snapshot {
 
 	elapsed := now.Sub(s.prevWall).Seconds()
 	first := s.prevWall.IsZero()
+	cores := s.cores
+	if cores < 1 {
+		cores = 1
+	}
 
 	snapshot := Snapshot{Targets: make(map[string]Sample, len(pids))}
 	nextCPU := make(map[string]float64, len(pids))
@@ -55,7 +62,7 @@ func (s *processSampler) Sample(ctx context.Context) Snapshot {
 		if !first && elapsed > 0 && s.prevPID[ref] == pid {
 			if prev, seen := s.prevCPU[ref]; seen {
 				if delta := cpuSeconds - prev; delta > 0 {
-					percent = delta / elapsed * 100
+					percent = delta / elapsed / float64(cores) * 100
 				}
 			}
 		}

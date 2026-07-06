@@ -67,6 +67,32 @@ func TestSamplerComputesCPUPercentFromDeltas(t *testing.T) {
 	}
 }
 
+func TestSamplerNormalizesCPUByCoreCount(t *testing.T) {
+	registry := NewRegistry()
+	registry.track("api:serve", 100)
+
+	wall := time.Unix(0, 0)
+	cpuSeconds := 0.0
+	sampler := &processSampler{
+		registry: registry,
+		usage: func(context.Context, int32) (uint64, float64, bool) {
+			return 1024, cpuSeconds, true
+		},
+		now:     func() time.Time { return wall },
+		cores:   4,
+		prevCPU: make(map[string]float64),
+		prevPID: make(map[string]int32),
+	}
+
+	sampler.Sample(context.Background())
+
+	wall = wall.Add(time.Second)
+	cpuSeconds = 0.5
+	if got := sampler.Sample(context.Background()).Targets["api:serve"].CPU; got != 12.5 {
+		t.Fatalf("expected 12.5%% cpu across 4 cores, got %v", got)
+	}
+}
+
 func TestSamplerResetsCPUOnPIDChange(t *testing.T) {
 	registry := NewRegistry()
 	registry.track("api:serve", 100)
