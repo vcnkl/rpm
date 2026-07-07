@@ -262,11 +262,7 @@ func (m dashboardModel) renderRosterRow(row rosterRow, interior int) string {
 	if avail < 1 {
 		avail = 1
 	}
-	label := unit.Ref
-	if unit.Error != "" {
-		label = unit.Ref + "  " + unit.Error
-	}
-	label = truncate(label, avail)
+	label := truncate(unit.Ref, avail)
 	if showMetrics {
 		label = padRight(label, avail)
 	}
@@ -277,8 +273,14 @@ func (m dashboardModel) renderRosterRow(row rosterRow, interior int) string {
 
 	inner := accent + glyph + " " + badge + " " + labelStyle.Render(label) + right
 	wrap := m.theme.r.NewStyle().Width(interior)
+	if unit.Status == statusFailed {
+		wrap = wrap.Background(colFailedBg)
+	}
 	if selected {
-		wrap = wrap.Background(colPanel).Bold(true)
+		wrap = wrap.Bold(true)
+		if unit.Status != statusFailed {
+			wrap = wrap.Background(colPanel)
+		}
 	}
 	return m.zones.Mark(zoneRow(m.zonePrefix, row.unitIndex), wrap.Render(inner))
 }

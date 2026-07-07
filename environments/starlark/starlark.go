@@ -17,6 +17,7 @@ type RuntimePlan struct {
 	Environment   Environment
 	Dependencies  []Dependency
 	BeforeTargets []TargetProcess
+	DepTargets    []TargetProcess
 	Targets       []TargetProcess
 	Watches       []Watch
 	RunOrder      []string
@@ -63,18 +64,14 @@ type Watch struct {
 	Enabled bool
 }
 
-func InterpretFile(ctx context.Context, blueprint string, path string) (*RuntimePlan, error) {
-	return interpret(ctx, blueprint, path, nil)
-}
-
 func InterpretSource(ctx context.Context, blueprint string, filename string, src []byte) (*RuntimePlan, error) {
 	return interpret(ctx, blueprint, filename, src)
 }
 
 func interpret(ctx context.Context, blueprint string, filename string, src []byte) (*RuntimePlan, error) {
-	builder := &planBuilder{}
+	pb := &planBuilder{}
 	thread := &gostarlark.Thread{Name: "rpm-env:" + blueprint}
-	thread.SetLocal("plan", builder)
+	thread.SetLocal("plan", pb)
 	thread.SetMaxExecutionSteps(stepBudget)
 
 	cancelled := make(chan struct{})
@@ -91,6 +88,7 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 		"rpm_environment":   gostarlark.NewBuiltin("rpm_environment", rpmEnvironment),
 		"rpm_dependency":    gostarlark.NewBuiltin("rpm_dependency", rpmDependency),
 		"rpm_before_target": gostarlark.NewBuiltin("rpm_before_target", rpmBeforeTarget),
+		"rpm_dep_target":    gostarlark.NewBuiltin("rpm_dep_target", rpmDepTarget),
 		"rpm_target":        gostarlark.NewBuiltin("rpm_target", rpmTarget),
 		"rpm_watch":         gostarlark.NewBuiltin("rpm_watch", rpmWatch),
 		"rpm_run":           gostarlark.NewBuiltin("rpm_run", rpmRun),
@@ -101,13 +99,14 @@ func interpret(ctx context.Context, blueprint string, filename string, src []byt
 	if _, err := gostarlark.ExecFileOptions(opts, thread, filename, src, predeclared); err != nil {
 		return nil, evalError(err)
 	}
-	return builder.plan(), nil
+	return pb.plan(), nil
 }
 
 type planBuilder struct {
 	environment   Environment
 	dependencies  []Dependency
 	beforeTargets []TargetProcess
+	depTargets    []TargetProcess
 	targets       []TargetProcess
 	watches       []Watch
 	runOrder      []string
@@ -124,6 +123,7 @@ func (b *planBuilder) plan() *RuntimePlan {
 		Environment:   b.environment,
 		Dependencies:  dependencies,
 		BeforeTargets: append([]TargetProcess{}, b.beforeTargets...),
+		DepTargets:    append([]TargetProcess{}, b.depTargets...),
 		Targets:       targets,
 		Watches:       watches,
 		RunOrder:      append([]string{}, b.runOrder...),
@@ -232,6 +232,21 @@ func rpmBeforeTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gos
 	return gostarlark.None, nil
 }
 
+func rpmDepTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
+	target, err := targetProcess(fn, args, kwargs, false)
+	if err != nil {
+		return nil, err
+	}
+	b := builder(thread)
+	for _, dt := range b.depTargets {
+		if dt.Ref == target.Ref {
+			return nil, fmt.Errorf("duplicate dep_target ref %q", target.Ref)
+		}
+	}
+	b.depTargets = append(b.depTargets, target)
+	return gostarlark.None, nil
+}
+
 func rpmWatch(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
 	var target string
 	var reload, enabled bool
@@ -322,12 +337,12 @@ func stringDict(value gostarlark.Value) (map[string]string, error) {
 		return nil, err
 	}
 	result := make(map[string]string, len(values))
-	for key, value := range values {
-		converted, err := stringFromValue(value)
+	for k, v := range values {
+		sv, err := stringFromValue(v)
 		if err != nil {
-			return nil, errors.Wrapf(err, "%s", key)
+			return nil, errors.Wrapf(err, "%s", k)
 		}
-		result[key] = converted
+		result[k] = sv
 	}
 	return result, nil
 }

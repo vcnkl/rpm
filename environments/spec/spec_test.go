@@ -291,6 +291,175 @@ func TestResolveRejectsInvalidBeforeTargets(t *testing.T) {
 	}
 }
 
+func TestResolveDerivesDepTargetsInDependencyOrder(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	bundleRoot := filepath.Join(repoRoot, "api")
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: codegen
+    cmd: echo codegen
+  - name: app_build
+    cmd: echo build
+    deps:
+      - ":codegen"
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - ":app_build"
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:    "local",
+		Targets: []models.EnvironmentTarget{{Ref: "api:app_serve", Env: map[string]string{}}},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"api:codegen", "api:app_build"}, beforeRefs(resolved.DepTargets))
+	assert.Equal(t, "echo build", resolved.DepTargets[1].Command)
+	assert.Equal(t, []spec.RuntimeUnit{
+		{Id: "api:codegen", Kind: "dep_target"},
+		{Id: "api:app_build", Kind: "dep_target"},
+		{Id: "api:app_serve", Kind: "target"},
+	}, resolved.RuntimeUnits)
+}
+
+func TestResolveDedupesSharedDepTargets(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	bundleRoot := filepath.Join(repoRoot, "api")
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: app_build
+    cmd: echo build
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - "api:app_build"
+  - name: worker_serve
+    cmd: echo worker
+    deps:
+      - ":app_build"
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name: "local",
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:app_serve", Env: map[string]string{}},
+			{Ref: "api:worker_serve", Env: map[string]string{}},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"api:app_build"}, beforeRefs(resolved.DepTargets))
+}
+
+func TestResolveSkipsLongRunningAndListedDepTargets(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	bundleRoot := filepath.Join(repoRoot, "api")
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: migrate
+    cmd: echo migrate
+  - name: app_build
+    cmd: echo build
+  - name: proxy_dev
+    cmd: echo proxy
+  - name: worker_serve
+    cmd: echo worker
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - ":migrate"
+      - ":app_build"
+      - ":proxy_dev"
+      - ":worker_serve"
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:   "local",
+		Before: []string{"api:migrate"},
+		Targets: []models.EnvironmentTarget{
+			{Ref: "api:app_serve", Env: map[string]string{}},
+			{Ref: "api:worker_serve", Env: map[string]string{}},
+		},
+	}
+
+	resolved, err := spec.Resolve(repo, blueprint)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"api:app_build"}, beforeRefs(resolved.DepTargets))
+}
+
+func TestResolveRejectsDepTargetCycle(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	bundleRoot := filepath.Join(repoRoot, "api")
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: alpha
+    cmd: echo alpha
+    deps:
+      - ":beta"
+  - name: beta
+    cmd: echo beta
+    deps:
+      - ":alpha"
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - ":alpha"
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:    "local",
+		Targets: []models.EnvironmentTarget{{Ref: "api:app_serve", Env: map[string]string{}}},
+	}
+
+	_, err := spec.Resolve(repo, blueprint)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "target dependency cycle detected")
+}
+
+func TestResolveRejectsUnknownDepTarget(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	bundleRoot := filepath.Join(repoRoot, "api")
+	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - ":missing"
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	blueprint := &models.EnvironmentBlueprint{
+		Name:    "local",
+		Targets: []models.EnvironmentTarget{{Ref: "api:app_serve", Env: map[string]string{}}},
+	}
+
+	_, err := spec.Resolve(repo, blueprint)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown dep target ref")
+}
+
 func TestResolveSortsEnvironmentTargets(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))

@@ -160,6 +160,76 @@ func TestUpRunsBeforeTargetsAfterDependenciesBeforeTargets(t *testing.T) {
 	assert.Equal(t, "49152", processes.started[2].Env["POSTGRES_PORT"])
 }
 
+func TestUpRunsDepTargetsAfterBeforeTargetsBeforeTargets(t *testing.T) {
+	order := []string{}
+	processes := &fakeProcessRunner{order: &order}
+	deps := &fakeDependencyRunner{order: &order, env: map[string]string{"POSTGRES_PORT": "49152"}}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.BeforeTargets = []envstarlark.TargetProcess{
+		{Ref: "api:migrate", Command: "echo migrate", WorkingDir: "/repo/api"},
+	}
+	plan.DepTargets = []envstarlark.TargetProcess{
+		{Ref: "api:codegen", Command: "echo codegen", WorkingDir: "/repo/api"},
+		{Ref: "api:app_build", Command: "echo build", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"deps up",
+		"process api:migrate",
+		"process api:codegen",
+		"process api:app_build",
+		"process api:serve",
+		"deps down",
+	}, order)
+	require.Len(t, processes.started, 4)
+	assert.Equal(t, "49152", processes.started[1].Env["POSTGRES_PORT"])
+	assert.Equal(t, "49152", processes.started[2].Env["POSTGRES_PORT"])
+	declaredKinds := map[string]string{}
+	for _, event := range events.byType(envruntime.EventUnitDeclared) {
+		declaredKinds[event.Ref] = event.Kind
+	}
+	assert.Equal(t, "dep_target", declaredKinds["api:codegen"])
+	assert.Equal(t, "dep_target", declaredKinds["api:app_build"])
+}
+
+func TestUpStopsDependenciesWhenDepTargetFailsNonInteractive(t *testing.T) {
+	order := []string{}
+	processes := &fakeProcessRunner{
+		order:    &order,
+		waitErrs: map[string]error{"api:app_build": assert.AnError},
+	}
+	deps := &fakeDependencyRunner{order: &order}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.DepTargets = []envstarlark.TargetProcess{
+		{Ref: "api:app_build", Command: "exit 1", WorkingDir: "/repo/api"},
+	}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Equal(t, []string{"deps up", "process api:app_build", "deps down"}, order)
+	assert.Equal(t, []string{"api:app_build"}, processes.startedRefs())
+	assert.Equal(t, 1, deps.downCalls)
+	assert.Contains(t, events.types(), envruntime.EventEnvironmentStopped)
+}
+
 func TestUpDependencyEnvOverridesTargetEnvAndPersistsAcrossRestart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

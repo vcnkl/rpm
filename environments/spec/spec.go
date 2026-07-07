@@ -18,6 +18,7 @@ type ResolvedEnvironment struct {
 	Variables     []EnvVar
 	Bundles       []Bundle
 	BeforeTargets []BeforeTarget
+	DepTargets    []BeforeTarget
 	Targets       []Target
 	Dependencies  []Dependency
 	RuntimeUnits  []RuntimeUnit
@@ -219,6 +220,12 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		})
 	}
 
+	depTargets, err := resolveDepTargets(repo, blueprint, targetSeen, beforeSeen, addBundle)
+	if err != nil {
+		return nil, err
+	}
+	resolved.DepTargets = depTargets
+
 	sort.Slice(resolved.Bundles, func(i, j int) bool {
 		return resolved.Bundles[i].Name < resolved.Bundles[j].Name
 	})
@@ -233,6 +240,9 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 	}
 	for _, dep := range resolved.Dependencies {
 		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: dep.Ref, Kind: "dependency"})
+	}
+	for _, dep := range resolved.DepTargets {
+		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: dep.Ref, Kind: "dep_target"})
 	}
 	for _, target := range resolved.Targets {
 		resolved.RuntimeUnits = append(resolved.RuntimeUnits, RuntimeUnit{Id: target.Ref, Kind: "target"})
@@ -269,6 +279,56 @@ func resolveBeforeTarget(repo *rootconfig.Config, blueprint *models.EnvironmentB
 			Files:   dotenvFiles,
 		},
 	}
+}
+
+func resolveDepTargets(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint, targetSeen map[string]bool, beforeSeen map[string]bool, addBundle func(*models.Bundle)) ([]BeforeTarget, error) {
+	ordered := []BeforeTarget{}
+	visited := make(map[string]bool)
+	inStack := make(map[string]bool)
+	var visit func(ref string, path []string) error
+	visit = func(ref string, path []string) error {
+		if inStack[ref] {
+			return errors.Errorf("target dependency cycle detected: %s", strings.Join(append(path, ref), " -> "))
+		}
+		if visited[ref] || beforeSeen[ref] || (targetSeen[ref] && len(path) > 0) {
+			return nil
+		}
+		visited[ref] = true
+		inStack[ref] = true
+		target, err := repo.ResolveTarget(ref)
+		if err != nil {
+			return errors.Wrapf(err, "unknown dep target ref %q", ref)
+		}
+		path = append(path, ref)
+		for _, depRef := range target.Deps {
+			if err := visit(qualifyTargetRef(depRef, target.BundleName), path); err != nil {
+				return err
+			}
+		}
+		inStack[ref] = false
+		if len(path) > 1 && !longRunningTarget(target.Name) {
+			addBundle(repo.Bundles()[target.BundleName])
+			ordered = append(ordered, resolveBeforeTarget(repo, blueprint, target))
+		}
+		return nil
+	}
+	for _, bpTarget := range blueprint.Targets {
+		if err := visit(bpTarget.Ref, nil); err != nil {
+			return nil, err
+		}
+	}
+	return ordered, nil
+}
+
+func qualifyTargetRef(ref string, bundleName string) string {
+	if strings.HasPrefix(ref, ":") {
+		return bundleName + ref
+	}
+	return ref
+}
+
+func longRunningTarget(name string) bool {
+	return strings.HasSuffix(name, "_dev") || strings.HasSuffix(name, "_serve")
 }
 
 func compareBeforeTargets(left, right resolvedBeforeTarget) bool {

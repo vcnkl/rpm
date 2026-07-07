@@ -69,6 +69,50 @@ rpm_run(order = ["api:migrate", "api:serve"])
 	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.Targets[0].DotenvFiles)
 }
 
+func TestLoadPlanResolvesDepTargetsFromConfigRefs(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`
+project:
+  name: test-project
+shell: /bin/sh
+`), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "api"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "api", "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: app_build
+    cmd: echo build
+  - name: app_serve
+    cmd: echo serve
+    deps:
+      - :app_build
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	require.NoError(t, os.MkdirAll(filepath.Dir(generator.CachePath(repo, "local")), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(generator.CachePath(repo, "local")), "config.yml"), []byte(`
+version: 1
+name: local
+targets:
+  - ref: api:app_serve
+`), 0644))
+	require.NoError(t, os.WriteFile(generator.CachePath(repo, "local"), []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_dep_target(ref = "api:app_build", config = "api/rpm.yml")
+rpm_target(ref = "api:app_serve", config = "api/rpm.yml", env = {}, reload = True)
+rpm_run(order = ["api:app_build", "api:app_serve"])
+`), 0644))
+	action := NewEnvAction(repo, nil, nil)
+
+	plan, err := action.loadPlan(context.Background(), "local")
+
+	require.NoError(t, err)
+	require.Len(t, plan.DepTargets, 1)
+	assert.Equal(t, "api:app_build", plan.DepTargets[0].Ref)
+	assert.Equal(t, "echo build", plan.DepTargets[0].Command)
+	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.DepTargets[0].DotenvFiles)
+	assert.Equal(t, []string{"api:app_build", "api:app_serve"}, plan.RunOrder)
+}
+
 func TestLoadPlanResolvesExplicitDependencyConfigRefs(t *testing.T) {
 	repoRoot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(`

@@ -32,6 +32,15 @@ rpm_before_target(
     config = "apps/go-app/rpm.yml",
 )
 
+rpm_dep_target(
+    ref = "go-app:app_build",
+    config = "apps/go-app/rpm.yml",
+)
+rpm_dep_target(
+    ref = "ts-app:app_build",
+    config = "apps/ts-app/rpm.yml",
+)
+
 rpm_target(
     ref = "go-app:echo-123",
     config = "apps/go-app/rpm.yml",
@@ -52,5 +61,5 @@ rpm_target(
 )
 
 rpm_run(
-    order = ["go-app:before_file", "go-app:before_inline", "go-app:prepare", "mailhog", "postgres", "redis", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
+    order = ["go-app:before_file", "go-app:before_inline", "go-app:prepare", "mailhog", "postgres", "redis", "go-app:app_build", "ts-app:app_build", "go-app:echo-123", "python-app:echo-456", "ts-app:web"],
 )

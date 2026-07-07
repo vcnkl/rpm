@@ -178,6 +178,10 @@ func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark
 	for i := range next.BeforeTargets {
 		next.BeforeTargets[i] = expandTargetProcess(next.BeforeTargets[i], repoRoot)
 	}
+	next.DepTargets = append([]envstarlark.TargetProcess{}, plan.DepTargets...)
+	for i := range next.DepTargets {
+		next.DepTargets[i] = expandTargetProcess(next.DepTargets[i], repoRoot)
+	}
 	next.Targets = append([]envstarlark.TargetProcess{}, plan.Targets...)
 	for i := range next.Targets {
 		next.Targets[i] = expandTargetProcess(next.Targets[i], repoRoot)
@@ -237,6 +241,11 @@ func planUsesConfigReferences(plan *envstarlark.RuntimePlan) bool {
 		}
 	}
 	for _, target := range plan.BeforeTargets {
+		if target.ConfigPath != "" || target.Command == "" {
+			return true
+		}
+	}
+	for _, target := range plan.DepTargets {
 		if target.ConfigPath != "" || target.Command == "" {
 			return true
 		}
@@ -313,6 +322,17 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 			DotenvFiles: append([]string{}, target.Dotenv.Files...),
 		})
 	}
+	for _, target := range env.DepTargets {
+		plan.DepTargets = append(plan.DepTargets, envstarlark.TargetProcess{
+			Ref:         target.Ref,
+			ConfigPath:  target.ConfigPath,
+			Command:     target.Command,
+			WorkingDir:  target.WorkingDir,
+			Env:         envVarMap(target.Env),
+			DotenvEnv:   envVarMap(target.DotenvEnv),
+			DotenvFiles: append([]string{}, target.Dotenv.Files...),
+		})
+	}
 	for _, target := range env.Targets {
 		plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
 			Ref:         target.Ref,
@@ -337,6 +357,9 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 			plan.RunOrder = append(plan.RunOrder, before.Ref)
 		}
 		for _, dep := range plan.Dependencies {
+			plan.RunOrder = append(plan.RunOrder, dep.Ref)
+		}
+		for _, dep := range plan.DepTargets {
 			plan.RunOrder = append(plan.RunOrder, dep.Ref)
 		}
 		for _, target := range plan.Targets {

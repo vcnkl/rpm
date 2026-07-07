@@ -179,83 +179,133 @@ func (r *Runner) emitExit(exit processExit) {
 	}
 }
 
+type startupContext struct {
+	plan        *envstarlark.RuntimePlan
+	startedDeps bool
+	watchCancel context.CancelFunc
+	recordedErr error
+}
+
+type startupStep struct {
+	name string
+	run  func(context.Context, *startupContext) error
+}
+
+func (r *Runner) startupSteps() []startupStep {
+	return []startupStep{
+		{name: "dependencies", run: r.startDependencies},
+		{name: "before_targets", run: r.runBeforeTargets},
+		{name: "dep_targets", run: r.runDepTargets},
+		{name: "targets", run: r.startTargets},
+		{name: "reload_watcher", run: r.startReloadWatcher},
+	}
+}
+
+func (r *Runner) startDependencies(ctx context.Context, state *startupContext) error {
+	if r.opts.DependencyRunner == nil || r.opts.NoDeps || len(state.plan.Dependencies) == 0 {
+		return nil
+	}
+	startup, err := r.opts.DependencyRunner.Up(ctx, state.plan.Environment.Name, state.plan)
+	if err != nil {
+		r.emitDependencyFailure(state.plan, err)
+		return err
+	}
+	state.plan = planWithDependencyEnv(state.plan, startup.Env)
+	state.startedDeps = true
+	r.setPlan(state.plan)
+	for _, dep := range state.plan.Dependencies {
+		r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
+	}
+	return nil
+}
+
+func (r *Runner) runBeforeTargets(ctx context.Context, state *startupContext) error {
+	for _, target := range state.plan.BeforeTargets {
+		if err := r.runBlockingTarget(ctx, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) runDepTargets(ctx context.Context, state *startupContext) error {
+	for _, target := range state.plan.DepTargets {
+		if err := r.runBlockingTarget(ctx, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) startTargets(ctx context.Context, state *startupContext) error {
+	for _, ref := range targetOrder(state.plan) {
+		target, ok := targetByRef(state.plan, ref)
+		if !ok {
+			continue
+		}
+		if err := r.startTarget(ctx, target); err != nil {
+			if r.opts.Interactive {
+				state.recordedErr = firstErr(state.recordedErr, err)
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) startReloadWatcher(ctx context.Context, state *startupContext) error {
+	if !r.reloadEnabled(state.plan) || r.opts.ReloadWatcher == nil {
+		return nil
+	}
+	watches := enabledWatches(state.plan)
+	if len(watches) == 0 {
+		return nil
+	}
+	debounce, err := time.ParseDuration(state.plan.Environment.LiveReload.Debounce)
+	if err != nil {
+		return fmt.Errorf("invalid live_reload.debounce: %w", err)
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	state.watchCancel = cancel
+	plan := state.plan
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		if err = r.opts.ReloadWatcher.Watch(watchCtx, watches, debounce, func(ref string, path string) {
+			r.reloadTarget(ctx, plan, ref, path)
+		}); err != nil && ctx.Err() == nil {
+			r.emitExit(processExit{err: err})
+		}
+	}()
+	return nil
+}
+
 func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	ctx, cancel := context.WithCancel(ctx)
 	r.setCancel(cancel)
 	defer cancel()
 	defer func() { r.shutdown(ctx) }()
 	r.declareUnits(plan)
-
-	startedDeps := false
-	if r.opts.DependencyRunner != nil && !r.opts.NoDeps && len(plan.Dependencies) > 0 {
-		startup, err := r.opts.DependencyRunner.Up(ctx, plan.Environment.Name, plan)
-		if err != nil {
-			r.emitDependencyFailure(plan, err)
-			if r.opts.Interactive {
-				return r.waitForQuitAfterError(ctx, plan, err, false)
-			}
-			return err
-		}
-		plan = planWithDependencyEnv(plan, startup.Env)
-		startedDeps = true
-		for _, dep := range plan.Dependencies {
-			r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
-		}
-	}
 	r.setPlan(plan)
 
-	for _, before := range plan.BeforeTargets {
-		if err := r.runBeforeTarget(ctx, before); err != nil {
+	state := &startupContext{plan: plan, watchCancel: func() {}}
+	for _, step := range r.startupSteps() {
+		if err := step.run(ctx, state); err != nil {
 			if r.opts.Interactive {
-				return r.waitForQuitAfterError(ctx, plan, err, startedDeps)
-			}
-			r.stopDependencies(ctx, plan, startedDeps)
-			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
-			return err
-		}
-	}
-
-	var recordedErr error
-	for _, ref := range targetOrder(plan) {
-		target, ok := targetByRef(plan, ref)
-		if !ok {
-			continue
-		}
-		if err := r.startTarget(ctx, target); err != nil {
-			if r.opts.Interactive {
-				recordedErr = firstErr(recordedErr, err)
-				continue
+				return r.waitForQuitAfterError(ctx, state.plan, err, state.startedDeps)
 			}
 			r.stopProcesses(ctx)
-			r.stopDependencies(ctx, plan, startedDeps)
+			r.stopDependencies(ctx, state.plan, state.startedDeps)
+			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: state.plan.Environment.Name})
 			return err
 		}
 	}
+	defer state.watchCancel()
 
-	watchCancel := func() {}
-	if r.reloadEnabled(plan) && r.opts.ReloadWatcher != nil {
-		watches := enabledWatches(plan)
-		if len(watches) > 0 {
-			debounce, err := time.ParseDuration(plan.Environment.LiveReload.Debounce)
-			if err != nil {
-				r.stopProcesses(ctx)
-				r.stopDependencies(ctx, plan, startedDeps)
-				return fmt.Errorf("invalid live_reload.debounce: %w", err)
-			}
-			watchCtx, cancel := context.WithCancel(ctx)
-			watchCancel = cancel
-			r.wg.Add(1)
-			go func() {
-				defer r.wg.Done()
-				if err := r.opts.ReloadWatcher.Watch(watchCtx, watches, debounce, func(ref string, path string) {
-					r.reloadTarget(ctx, plan, ref, path)
-				}); err != nil && ctx.Err() == nil {
-					r.emitExit(processExit{err: err})
-				}
-			}()
-		}
-	}
-	defer watchCancel()
+	plan = state.plan
+	startedDeps := state.startedDeps
+	recordedErr := state.recordedErr
 
 	for {
 		if r.idle() && recordedErr == nil {
@@ -457,7 +507,7 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 	return nil
 }
 
-func (r *Runner) runBeforeTarget(ctx context.Context, target envstarlark.TargetProcess) error {
+func (r *Runner) runBlockingTarget(ctx context.Context, target envstarlark.TargetProcess) error {
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
@@ -715,6 +765,17 @@ func (r *Runner) declareUnits(plan *envstarlark.RuntimePlan) {
 			Status: "pending",
 		})
 	}
+	for _, dep := range plan.DepTargets {
+		bundle, name := splitRef(dep.Ref)
+		r.opts.EventSink.Emit(Event{
+			Type:   EventUnitDeclared,
+			Ref:    dep.Ref,
+			Bundle: bundle,
+			Name:   name,
+			Kind:   "dep_target",
+			Status: "pending",
+		})
+	}
 	for _, target := range plan.Targets {
 		bundle, name := splitRef(target.Ref)
 		r.opts.EventSink.Emit(Event{
@@ -820,6 +881,10 @@ func planWithDependencyEnv(plan *envstarlark.RuntimePlan, env map[string]string)
 	for i := range next.BeforeTargets {
 		next.BeforeTargets[i] = targetWithDependencyEnv(next.BeforeTargets[i], env)
 	}
+	next.DepTargets = append([]envstarlark.TargetProcess{}, plan.DepTargets...)
+	for i := range next.DepTargets {
+		next.DepTargets[i] = targetWithDependencyEnv(next.DepTargets[i], env)
+	}
 	next.Targets = append([]envstarlark.TargetProcess{}, plan.Targets...)
 	for i := range next.Targets {
 		next.Targets[i] = targetWithDependencyEnv(next.Targets[i], env)
@@ -833,13 +898,15 @@ const (
 )
 
 // syncDependencyEnvDotenvFiles defines dependency env vars (such as published
-// ports) inside the dotenv files that reference them. Processes get resolved
-// values injected into their environment, but applications that reload dotenv
-// files themselves expand ${VAR} from the file's own scope, so the definitions
-// must exist in the file for those values to resolve.
+// ports) inside every target dotenv file. Processes get resolved values
+// injected into their environment, but applications that reload dotenv files
+// themselves expand ${VAR} from the file's own scope, so the definitions must
+// exist in the file for those values to resolve.
 func syncDependencyEnvDotenvFiles(plan *envstarlark.RuntimePlan, env map[string]string) {
 	seen := make(map[string]bool)
-	targets := append(append([]envstarlark.TargetProcess{}, plan.BeforeTargets...), plan.Targets...)
+	targets := append([]envstarlark.TargetProcess{}, plan.BeforeTargets...)
+	targets = append(targets, plan.DepTargets...)
+	targets = append(targets, plan.Targets...)
 	for _, target := range targets {
 		for _, file := range target.DotenvFiles {
 			if seen[file] {
@@ -851,11 +918,11 @@ func syncDependencyEnvDotenvFiles(plan *envstarlark.RuntimePlan, env map[string]
 	}
 }
 
-// upsertDependencyEnvBlock prepends a managed block defining the dependency
-// env vars a dotenv file references, replacing any block from a previous run.
-// The block sits at the top of the file because dotenv loaders expand ${VAR}
-// from definitions made earlier in the same file. Best effort: unreadable or
-// unwritable files are left alone.
+// upsertDependencyEnvBlock prepends a managed block defining all dependency
+// env vars, replacing any block from a previous run. The block sits at the top
+// of the file because dotenv loaders expand ${VAR} from definitions made
+// earlier in the same file. Best effort: missing, unreadable or unwritable
+// files are left alone.
 func upsertDependencyEnvBlock(path string, env map[string]string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -863,13 +930,17 @@ func upsertDependencyEnvBlock(path string, env map[string]string) {
 	}
 	content := string(data)
 	body, hadBlock := stripDependencyEnvBlock(content)
-	keys := referencedEnvKeys(body, env)
-	if len(keys) == 0 {
+	if len(env) == 0 {
 		if hadBlock {
 			_ = atomicWriteFile(path, []byte(body), dotenvFileMode(path))
 		}
 		return
 	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	var block strings.Builder
 	block.WriteString(dotenvBlockBegin + "\n")
 	for _, key := range keys {
@@ -923,17 +994,6 @@ func stripDependencyEnvBlock(content string) (string, bool) {
 		kept = append(kept, line)
 	}
 	return strings.Join(kept, "\n"), stripped
-}
-
-func referencedEnvKeys(content string, env map[string]string) []string {
-	keys := make([]string, 0, len(env))
-	for key := range env {
-		if strings.Contains(content, "${"+key+"}") {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func dotenvFileMode(path string) os.FileMode {

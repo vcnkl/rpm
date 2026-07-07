@@ -12,7 +12,7 @@ targets:
       - "src/**/*.ts"
     out:
       - dist/index.js
-    cmd: npx tsc
+    cmd: mkdir -p dist && echo "built" > dist/index.js
     config:
       working_dir: local
 

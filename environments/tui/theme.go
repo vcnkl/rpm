@@ -18,6 +18,8 @@ var (
 	colDep     = lipgloss.Color("#60a5fa")
 	colBefore  = lipgloss.Color("#c084fc")
 
+	colFailedBg = lipgloss.AdaptiveColor{Light: "#fee2e2", Dark: "#7f1d1d"}
+
 	colText   = lipgloss.AdaptiveColor{Light: "#0f172a", Dark: "#e2e8f0"}
 	colFaint  = lipgloss.AdaptiveColor{Light: "#64748b", Dark: "#64748b"}
 	colBorder = lipgloss.AdaptiveColor{Light: "#cbd5e1", Dark: "#334155"}
@@ -122,6 +124,8 @@ func kindBadge(kind unitKind) (string, lipgloss.TerminalColor) {
 		return "dep", colDep
 	case kindBefore:
 		return "before", colBefore
+	case kindDepTarget:
+		return "build", colReload
 	case kindTarget:
 		return "target", colBrandA
 	case kindEnvironment:
@@ -137,6 +141,8 @@ func groupLabel(kind unitKind) string {
 		return "DEPENDENCIES"
 	case kindBefore:
 		return "BEFORE"
+	case kindDepTarget:
+		return "BUILD DEPS"
 	case kindTarget:
 		return "TARGETS"
 	default:

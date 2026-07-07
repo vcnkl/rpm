@@ -53,6 +53,16 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 		buf.WriteByte('\n')
 	}
 
+	for _, dep := range env.DepTargets {
+		writeCall(&buf, "rpm_dep_target", []field{
+			{name: "ref", value: quote(dep.Ref)},
+			{name: "config", value: quote(dep.ConfigPath)},
+		})
+	}
+	if len(env.DepTargets) > 0 {
+		buf.WriteByte('\n')
+	}
+
 	targets := append([]spec.Target{}, env.Targets...)
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].Ref < targets[j].Ref
@@ -69,11 +79,14 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 		buf.WriteByte('\n')
 	}
 
-	order := make([]string, 0, len(env.BeforeTargets)+len(dependencies)+len(targets))
+	order := make([]string, 0, len(env.BeforeTargets)+len(dependencies)+len(env.DepTargets)+len(targets))
 	for _, before := range env.BeforeTargets {
 		order = append(order, before.Ref)
 	}
 	for _, dep := range dependencies {
+		order = append(order, dep.Ref)
+	}
+	for _, dep := range env.DepTargets {
 		order = append(order, dep.Ref)
 	}
 	for _, target := range targets {

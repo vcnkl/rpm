@@ -256,6 +256,10 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:before_file"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"go-app:before_inline"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:before_inline"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"go-app:app_build"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:app_build"`)
+	assert.Contains(t, output, `"type":"process_started","ref":"ts-app:app_build"`)
+	assert.Contains(t, output, `"type":"process_exited","ref":"ts-app:app_build"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"go-app:echo-123"`)
 	assert.Contains(t, output, `"type":"process_exited","ref":"go-app:echo-123"`)
 	assert.Contains(t, output, `"type":"process_started","ref":"python-app:echo-456"`)
@@ -268,6 +272,9 @@ func TestIntegration_EnvUpNonInteractiveNoDepsNoReload(t *testing.T) {
 	assert.Less(t, strings.Index(output, `"ref":"go-app:prepare"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 	assert.Less(t, strings.Index(output, `"ref":"go-app:before_file"`), strings.Index(output, `"ref":"go-app:echo-123"`))
 	assert.Less(t, strings.Index(output, `"ref":"go-app:before_inline"`), strings.Index(output, `"ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"ref":"go-app:before_inline"`), strings.Index(output, `"ref":"go-app:app_build"`))
+	assert.Less(t, strings.Index(output, `"type":"process_exited","ref":"go-app:app_build"`), strings.Index(output, `"type":"process_started","ref":"go-app:echo-123"`))
+	assert.Less(t, strings.Index(output, `"type":"process_exited","ref":"ts-app:app_build"`), strings.Index(output, `"type":"process_started","ref":"ts-app:web"`))
 }
 
 func TestIntegration_EnvCommandsEndToEnd(t *testing.T) {

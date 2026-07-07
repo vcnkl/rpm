@@ -13,7 +13,7 @@ targets:
       - "*.go"
     out:
       - bin/app
-    cmd: go build -o bin/app .
+    cmd: mkdir -p bin && echo "APP_BUILD_MODE=$BUILD_MODE" > bin/app
     env:
       BUILD_MODE: "release"
     config:

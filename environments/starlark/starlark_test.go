@@ -78,6 +78,38 @@ func TestInterpretGeneratorOutput(t *testing.T) {
 	assert.Empty(t, plan.Watches)
 }
 
+func TestInterpretDepTargetsPreserveDeclarationOrder(t *testing.T) {
+	src := []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_dep_target(ref = "api:codegen", command = "go generate ./...", workdir = "/repo/api", env = {})
+rpm_dep_target(ref = "api:app_build", command = "go build ./...", workdir = "/repo/api", env = {})
+rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {}, reload = True)
+rpm_run(order = ["api:codegen", "api:app_build", "api:serve"])
+`)
+
+	plan, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
+
+	require.NoError(t, err)
+	require.Len(t, plan.DepTargets, 2)
+	assert.Equal(t, "api:codegen", plan.DepTargets[0].Ref)
+	assert.Equal(t, "go generate ./...", plan.DepTargets[0].Command)
+	assert.Equal(t, "api:app_build", plan.DepTargets[1].Ref)
+}
+
+func TestInterpretRejectsDuplicateDepTargetRefs(t *testing.T) {
+	src := []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_dep_target(ref = "api:app_build", command = "go build ./...", workdir = "/repo/api", env = {})
+rpm_dep_target(ref = "api:app_build", command = "go build ./...", workdir = "/repo/api", env = {})
+rpm_run(order = ["api:app_build"])
+`)
+
+	_, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `duplicate dep_target ref "api:app_build"`)
+}
+
 func TestInterpretRejectsDuplicateDependencyRefs(t *testing.T) {
 	src := []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})

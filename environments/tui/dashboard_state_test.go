@@ -41,6 +41,21 @@ func TestApplyEventDeclaresAndTransitions(t *testing.T) {
 	}
 }
 
+func TestApplyEventRecoversAfterFailure(t *testing.T) {
+	state := newEnvState("env")
+	state = applyEvent(state, envruntime.Event{Type: envruntime.EventUnitDeclared, Ref: "go-app:web", Kind: "target", Status: "pending"})
+	state = applyEvent(state, envruntime.Event{Type: envruntime.EventProcessExited, Ref: "go-app:web", Error: "exit status 1"})
+	if unit, _ := find(state.units, "go-app:web"); unit.Status != statusFailed {
+		t.Fatalf("expected failed, got %s", unit.Status)
+	}
+
+	state = applyEvent(state, envruntime.Event{Type: envruntime.EventProcessStarted, Ref: "go-app:web"})
+	unit, _ := find(state.units, "go-app:web")
+	if unit.Status != statusRunning {
+		t.Fatalf("expected running after restart, got %s", unit.Status)
+	}
+}
+
 func TestApplyEventKeepsDeclaredKind(t *testing.T) {
 	state := newEnvState("env")
 	state = applyEvent(state, envruntime.Event{Type: envruntime.EventUnitDeclared, Ref: "postgres", Kind: "dependency", Status: "pending"})

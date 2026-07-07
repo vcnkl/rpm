@@ -23,6 +23,7 @@ type unitKind string
 const (
 	kindDependency  unitKind = "dependency"
 	kindBefore      unitKind = "before"
+	kindDepTarget   unitKind = "dep_target"
 	kindTarget      unitKind = "target"
 	kindEnvironment unitKind = "environment"
 )
@@ -42,8 +43,9 @@ var statusOrder = map[unitStatus]int{
 var kindOrder = map[unitKind]int{
 	kindDependency:  0,
 	kindBefore:      1,
-	kindTarget:      2,
-	kindEnvironment: 3,
+	kindDepTarget:   2,
+	kindTarget:      3,
+	kindEnvironment: 4,
 }
 
 type unitState struct {
@@ -53,7 +55,6 @@ type unitState struct {
 	Kind   unitKind
 	Status unitStatus
 	Output []string
-	Error  string
 }
 
 type envState struct {
@@ -156,9 +157,6 @@ func upsertUnit(state envState, ref string, kind unitKind, status unitStatus, ev
 			unit.Kind = kind
 		}
 		unit.Status = status
-		if event.Error != "" {
-			unit.Error = event.Error
-		}
 		units[index] = unit
 	} else {
 		unit := unitState{Ref: ref, Kind: kind, Status: status, Output: []string{}}
@@ -167,9 +165,6 @@ func upsertUnit(state envState, ref string, kind unitKind, status unitStatus, ev
 		}
 		if event.Name != "" {
 			unit.Name = event.Name
-		}
-		if event.Error != "" {
-			unit.Error = event.Error
 		}
 		units = append(units, unit)
 	}
