@@ -24,7 +24,7 @@ func TestRenderDeterministicOutput(t *testing.T) {
 			{Name: "A", Value: "first"},
 		},
 		Targets: []spec.Target{
-			{Ref: "z:serve", ConfigPath: "z/rpm.yml", Command: "echo z", WorkingDir: "/repo/z", ExplicitEnv: []spec.EnvVar{{Name: "Z", Value: "1"}}, OverrideEnv: []spec.EnvVar{{Name: "Z", Value: "override"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/z"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
+			{Ref: "z:serve", ConfigPath: "z/rpm.yml", Command: "echo z", WorkingDir: "/repo/z", ReadinessCmd: "test -f /tmp/z-ready", ExplicitEnv: []spec.EnvVar{{Name: "Z", Value: "1"}}, OverrideEnv: []spec.EnvVar{{Name: "Z", Value: "override"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/z"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 			{Ref: "a:serve", ConfigPath: "a/rpm.yml", Command: "echo a", WorkingDir: "/repo/a", ExplicitEnv: []spec.EnvVar{{Name: "A", Value: "1"}}, Reload: true, Watch: spec.Watch{Roots: []string{"/repo/a"}, Ignore: []string{"tmp/**"}, Reload: true, Enabled: true}},
 		},
 		Dependencies: []spec.Dependency{
@@ -62,7 +62,8 @@ func TestRenderDeterministicOutput(t *testing.T) {
 	assert.NotContains(t, string(first), `echo z`)
 	assert.NotContains(t, string(first), `ports =`)
 	assert.NotContains(t, string(first), `readiness_cmd =`)
-	assert.Contains(t, string(first), `order = ["z:before", "a:before", "postgres", "redis", "a:serve", "z:serve"]`)
+	assert.NotContains(t, string(first), `test -f /tmp/z-ready`)
+	assert.Contains(t, string(first), `order = ["z:before", "a:before", "postgres", "redis", "z:serve", "a:serve"]`)
 }
 
 func TestRenderGoldenLocalStack(t *testing.T) {

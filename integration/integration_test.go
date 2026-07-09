@@ -20,8 +20,11 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/vcnkl/rpm/actions"
 	rootconfig "github.com/vcnkl/rpm/config"
+	envconfig "github.com/vcnkl/rpm/environments/config"
+	"github.com/vcnkl/rpm/environments/generator"
 	envruntime "github.com/vcnkl/rpm/environments/runtime"
 	"github.com/vcnkl/rpm/environments/runtime/docker"
+	"github.com/vcnkl/rpm/environments/spec"
 	envstarlark "github.com/vcnkl/rpm/environments/starlark"
 )
 
@@ -128,6 +131,67 @@ func TestIntegration_EnvUpNonInteractiveBypassesNodeTUI(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIntegration_EnvUpOrdersTargetsAndWaitsForReadiness(t *testing.T) {
+	shouldSkip(t)
+	t.Parallel()
+
+	repo := newOrderedEnvironmentRepo(t)
+	blueprint, err := envconfig.LoadBlueprint(repo, "ordered")
+	require.NoError(t, err)
+	resolved, err := spec.Resolve(repo, blueprint)
+	require.NoError(t, err)
+	_, err = generator.Write(repo, resolved, "")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var output bytes.Buffer
+	action := actions.NewEnvAction(repo, &output, &output)
+	result := make(chan error, 1)
+
+	go func() {
+		result <- action.Up(ctx, actions.EnvUpOptions{
+			Blueprint:      "ordered",
+			NoDeps:         true,
+			NoReload:       true,
+			NonInteractive: true,
+		})
+	}()
+
+	waitForFile(t, ctx, filepath.Join(repo.RepoRoot(), "readiness.entered"))
+	_, err = os.Stat(filepath.Join(repo.RepoRoot(), "baseline.started"))
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.RepoRoot(), "readiness.release"), nil, 0644))
+
+	select {
+	case err = <-result:
+	case <-ctx.Done():
+		require.FailNow(t, "environment startup timed out", ctx.Err().Error())
+	}
+
+	require.NoError(t, err, output.String())
+	events := runtimeEvents(t, output.String())
+	started := make([]string, 0, 4)
+	readinessPosition := -1
+	baselinePosition := -1
+	for i, event := range events {
+		if event.Type == envruntime.EventProcessStarted {
+			started = append(started, event.Ref)
+			if event.Ref == "app:baseline_serve" {
+				baselinePosition = i
+			}
+		}
+		if event.Type == envruntime.EventProcessOutput && event.Ref == "app:negative_serve" && event.Line == "readiness-complete" {
+			readinessPosition = i
+		}
+	}
+
+	assert.Equal(t, []string{"app:negative_serve", "app:baseline_serve", "app:zero_serve", "app:positive_serve"}, started)
+	require.NotEqual(t, -1, readinessPosition, output.String())
+	require.NotEqual(t, -1, baselinePosition, output.String())
+	assert.Less(t, readinessPosition, baselinePosition)
+}
+
 func TestIntegration_EnvUpResolvesDependencyPortsInDotenv(t *testing.T) {
 	shouldSkip(t)
 
@@ -193,6 +257,91 @@ func copySampleRepo(t *testing.T) string {
 		return os.WriteFile(target, data, info.Mode().Perm())
 	}))
 	return dst
+}
+
+func newOrderedEnvironmentRepo(t *testing.T) *rootconfig.Config {
+	t.Helper()
+
+	repoRoot := t.TempDir()
+	files := map[string]string{
+		"repo.yml": "project:\n  name: ordered-repo\nshell: /bin/sh\n",
+		filepath.Join("app", "rpm.yml"): `name: app
+targets:
+  - name: positive_serve
+    cmd: echo positive
+    config:
+      index: 10
+  - name: zero_serve
+    cmd: echo zero
+    config:
+      index: 0
+  - name: negative_serve
+    cmd: |
+      until [ -f "$REPO_ROOT/readiness.release" ]; do
+        sleep 0.01
+      done
+      : > "$REPO_ROOT/negative.ready"
+    config:
+      index: -1
+      readiness-cmd: |
+        : > "$REPO_ROOT/readiness.entered"
+        until [ -f "$REPO_ROOT/readiness.release" ]; do
+          sleep 0.01
+        done
+        until [ -f "$REPO_ROOT/negative.ready" ]; do
+          sleep 0.01
+        done
+        printf readiness-complete
+  - name: baseline_serve
+    cmd: |
+      : > "$REPO_ROOT/baseline.started"
+      echo baseline
+`,
+		filepath.Join(".rpm", "envs", "ordered", "config.yml"): `version: 1
+name: ordered
+live_reload:
+  enabled: false
+targets:
+  - ref: app:positive_serve
+  - ref: app:zero_serve
+  - ref: app:negative_serve
+  - ref: app:baseline_serve
+`,
+	}
+	for path, data := range files {
+		fullPath := filepath.Join(repoRoot, path)
+		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+		require.NoError(t, os.WriteFile(fullPath, []byte(data), 0644))
+	}
+	cmd := exec.Command("git", "init", "--quiet")
+	cmd.Dir = repoRoot
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = repoRoot
+	require.NoError(t, cmd.Run())
+
+	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+}
+
+func runtimeEvents(t *testing.T, output string) []envruntime.Event {
+	t.Helper()
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	events := make([]envruntime.Event, 0, len(lines))
+	for _, line := range lines {
+		var event envruntime.Event
+		require.NoError(t, json.Unmarshal([]byte(line), &event), line)
+		events = append(events, event)
+	}
+	return events
+}
+
+func waitForFile(t *testing.T, ctx context.Context, path string) {
+	t.Helper()
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `until [ -f "$1" ]; do sleep 0.01; done`, "wait-for-file", path)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func removeSampleRepoVolumes() {
@@ -835,6 +984,35 @@ func TestUpReturnsDependencyReadinessFailure(t *testing.T) {
 	}, backend.calls)
 }
 
+func TestIntegration_UpCancellationDuringDependencyReadinessRollsBackWithLiveContext(t *testing.T) {
+	shouldSkip(t)
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	backend := &recordingBackend{}
+	readiness := &recordingReadinessRunner{cancel: cancel}
+	runner := docker.NewCLI(docker.Options{Backend: backend, ReadinessRunner: readiness})
+	plan := &envstarlark.RuntimePlan{
+		Dependencies: []envstarlark.Dependency{{
+			Ref:          "postgres",
+			Name:         "postgres",
+			Image:        "postgres:16",
+			ReadinessCmd: "until-ready",
+		}},
+	}
+
+	_, err := runner.Up(ctx, "local-stack", plan)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, []string{
+		"network rpm-local-stack",
+		"run rpm-local-stack-postgres",
+		"remove-container rpm-local-stack-postgres",
+		"remove-network rpm-local-stack",
+	}, backend.calls)
+	assert.Equal(t, []error{nil, nil}, backend.cleanupContextErrs)
+}
+
 func TestUpRejectsInvalidCustomPortEnvName(t *testing.T) {
 	shouldSkip(t)
 
@@ -1318,6 +1496,7 @@ func TestFileVolumeNamerPersistsAndPrunesBlueprintEntries(t *testing.T) {
 type recordingBackend struct {
 	calls                  []string
 	containers             []docker.ContainerSpec
+	cleanupContextErrs     []error
 	missingContainers      map[string]bool
 	missingNetworks        map[string]bool
 	missingVolumes         map[string]bool
@@ -1333,16 +1512,22 @@ type readinessCall struct {
 }
 
 type recordingReadinessRunner struct {
-	calls []readinessCall
-	err   error
+	calls  []readinessCall
+	err    error
+	cancel context.CancelFunc
 }
 
-func (r *recordingReadinessRunner) Run(_ context.Context, shell string, command string, env map[string]string) error {
+func (r *recordingReadinessRunner) Run(ctx context.Context, shell string, command string, env map[string]string) error {
 	values := make(map[string]string, len(env))
 	for key, value := range env {
 		values[key] = value
 	}
 	r.calls = append(r.calls, readinessCall{shell: shell, command: command, env: values})
+	if r.cancel != nil {
+		r.cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return r.err
 }
 
@@ -1395,8 +1580,9 @@ func (b *recordingBackend) reusedPorts(spec docker.ContainerSpec) map[string]str
 	return ports
 }
 
-func (b *recordingBackend) RemoveContainer(_ context.Context, name string) error {
+func (b *recordingBackend) RemoveContainer(ctx context.Context, name string) error {
 	b.calls = append(b.calls, "remove-container "+name)
+	b.cleanupContextErrs = append(b.cleanupContextErrs, ctx.Err())
 	if b.missingContainers[name] {
 		return errors.New("no such container")
 	}
@@ -1405,16 +1591,18 @@ func (b *recordingBackend) RemoveContainer(_ context.Context, name string) error
 	return nil
 }
 
-func (b *recordingBackend) RemoveNetwork(_ context.Context, name string) error {
+func (b *recordingBackend) RemoveNetwork(ctx context.Context, name string) error {
 	b.calls = append(b.calls, "remove-network "+name)
+	b.cleanupContextErrs = append(b.cleanupContextErrs, ctx.Err())
 	if b.missingNetworks[name] {
 		return errors.New("no such network")
 	}
 	return nil
 }
 
-func (b *recordingBackend) RemoveVolume(_ context.Context, name string) error {
+func (b *recordingBackend) RemoveVolume(ctx context.Context, name string) error {
 	b.calls = append(b.calls, "remove-volume "+name)
+	b.cleanupContextErrs = append(b.cleanupContextErrs, ctx.Err())
 	if b.missingVolumes[name] {
 		return errors.New("no such volume")
 	}

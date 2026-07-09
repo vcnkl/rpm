@@ -114,7 +114,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 	createdVolumes := []string{}
 	fail := func(ref string, cause error) (envruntime.DependencyStartup, error) {
 		depErr := envruntime.NewDependencyError(ref, cause)
-		if cleanupErr := c.cleanup(ctx, network, createdNetwork, startedContainers, createdVolumes); cleanupErr != nil {
+		if cleanupErr := c.cleanup(context.WithoutCancel(ctx), network, createdNetwork, startedContainers, createdVolumes); cleanupErr != nil {
 			return envruntime.DependencyStartup{}, errors.Wrapf(depErr, "%v", cleanupErr)
 		}
 		return envruntime.DependencyStartup{}, depErr

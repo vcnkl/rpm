@@ -53,7 +53,8 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 		sink = progSink
 	}
 
-	var processRunner envruntime.ProcessRunner = envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err)
+	shellRunner := envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err)
+	var processRunner envruntime.ProcessRunner = shellRunner
 	var sampler metrics.Sampler
 	if !opts.NonInteractive {
 		registry := metrics.NewRegistry()
@@ -63,6 +64,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 
 	runner := envruntime.NewRunner(envruntime.Options{
 		ProcessRunner:    processRunner,
+		ReadinessRunner:  shellRunner,
 		DependencyRunner: a.dockerCLI(),
 		ReloadWatcher:    envruntime.NewWatcherFactory(),
 		EventSink:        sink,
@@ -77,7 +79,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 	return envtui.RunDashboard(ctx, envtui.DashboardConfig{
 		Blueprint:  plan.Environment.Name,
 		Sink:       progSink,
-		Controller: controlSender{actions: controlActions},
+		Controller: controlSender{actions: controlActions, stop: runner.Stop},
 		Run:        func(runCtx context.Context) error { return runner.Up(runCtx, plan) },
 		Input:      os.Stdin,
 		Output:     stderrOrDefault(a.err),
@@ -87,6 +89,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 
 type controlSender struct {
 	actions chan<- envruntime.ControlAction
+	stop    func()
 }
 
 func (s controlSender) Restart(_ context.Context, ref string) error {
@@ -100,7 +103,7 @@ func (s controlSender) RestartAll(context.Context) error {
 }
 
 func (s controlSender) Stop() {
-	s.actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
+	s.stop()
 }
 
 type EnvDownOptions struct {
@@ -197,6 +200,7 @@ func expandRepoRoot(plan *envstarlark.RuntimePlan, repoRoot string) *envstarlark
 func expandTargetProcess(target envstarlark.TargetProcess, repoRoot string) envstarlark.TargetProcess {
 	target.ConfigPath = expandString(target.ConfigPath, repoRoot)
 	target.WorkingDir = expandString(target.WorkingDir, repoRoot)
+	target.ReadinessCmd = expandString(target.ReadinessCmd, repoRoot)
 	target.Env = expandMap(target.Env, repoRoot)
 	target.DotenvEnv = expandMap(target.DotenvEnv, repoRoot)
 	target.DotenvFiles = expandList(target.DotenvFiles, repoRoot)
@@ -231,7 +235,7 @@ func (a *EnvAction) resolvePlanReferences(plan *envstarlark.RuntimePlan) (*envst
 	if err != nil {
 		return nil, err
 	}
-	return resolvedPlan(resolved, plan.RunOrder), nil
+	return resolvedPlan(resolved), nil
 }
 
 func planUsesConfigReferences(plan *envstarlark.RuntimePlan) bool {
@@ -287,7 +291,7 @@ func planTargets(targets []envstarlark.TargetProcess) []models.EnvironmentTarget
 	return result
 }
 
-func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarlark.RuntimePlan {
+func resolvedPlan(env *envspec.ResolvedEnvironment) *envstarlark.RuntimePlan {
 	plan := &envstarlark.RuntimePlan{
 		Environment: envstarlark.Environment{
 			Name:      env.Name,
@@ -297,7 +301,6 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 				Debounce: env.ReloadPolicy.Debounce,
 			},
 		},
-		RunOrder: append([]string{}, runOrder...),
 	}
 	for _, dep := range env.Dependencies {
 		plan.Dependencies = append(plan.Dependencies, envstarlark.Dependency{
@@ -335,14 +338,15 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 	}
 	for _, target := range env.Targets {
 		plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
-			Ref:         target.Ref,
-			ConfigPath:  target.ConfigPath,
-			Command:     target.Command,
-			WorkingDir:  target.WorkingDir,
-			Env:         envVarMap(target.ExplicitEnv),
-			DotenvEnv:   envVarMap(target.DotenvEnv),
-			DotenvFiles: append([]string{}, target.Dotenv.Files...),
-			Reload:      target.Reload,
+			Ref:          target.Ref,
+			ConfigPath:   target.ConfigPath,
+			Command:      target.Command,
+			WorkingDir:   target.WorkingDir,
+			ReadinessCmd: target.ReadinessCmd,
+			Env:          envVarMap(target.ExplicitEnv),
+			DotenvEnv:    envVarMap(target.DotenvEnv),
+			DotenvFiles:  append([]string{}, target.Dotenv.Files...),
+			Reload:       target.Reload,
 		})
 		plan.Watches = append(plan.Watches, envstarlark.Watch{
 			Target:  target.Ref,
@@ -352,19 +356,8 @@ func resolvedPlan(env *envspec.ResolvedEnvironment, runOrder []string) *envstarl
 			Enabled: target.Watch.Enabled,
 		})
 	}
-	if len(plan.RunOrder) == 0 {
-		for _, before := range plan.BeforeTargets {
-			plan.RunOrder = append(plan.RunOrder, before.Ref)
-		}
-		for _, dep := range plan.Dependencies {
-			plan.RunOrder = append(plan.RunOrder, dep.Ref)
-		}
-		for _, dep := range plan.DepTargets {
-			plan.RunOrder = append(plan.RunOrder, dep.Ref)
-		}
-		for _, target := range plan.Targets {
-			plan.RunOrder = append(plan.RunOrder, target.Ref)
-		}
+	for _, unit := range env.RuntimeUnits {
+		plan.RunOrder = append(plan.RunOrder, unit.Id)
 	}
 	return plan
 }

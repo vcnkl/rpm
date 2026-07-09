@@ -1,9 +1,12 @@
 package actions
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +14,7 @@ import (
 
 	rootconfig "github.com/vcnkl/rpm/config"
 	"github.com/vcnkl/rpm/environments/generator"
+	envruntime "github.com/vcnkl/rpm/environments/runtime"
 )
 
 func TestLoadPlanResolvesRequiredDependenciesFromConfigRefs(t *testing.T) {
@@ -67,6 +71,78 @@ rpm_run(order = ["api:migrate", "api:serve"])
 	assert.Equal(t, "echo \"$POSTGRES_PORT\"", plan.BeforeTargets[0].Command)
 	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.BeforeTargets[0].DotenvFiles)
 	assert.Equal(t, []string{filepath.Join(repoRoot, "api", ".env")}, plan.Targets[0].DotenvFiles)
+}
+
+func TestEnvUpRefreshesTargetRunOrderFromConfigRefs(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "api"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "alpha-ready"), []byte{}, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "api", "rpm.yml"), []byte(`
+name: api
+targets:
+  - name: migrate
+    cmd: echo migrate
+  - name: alpha
+    cmd: echo alpha
+    config:
+      index: -1
+      readiness-cmd: test -f ${REPO_ROOT}/alpha-ready
+  - name: zed
+    cmd: echo zed
+    config:
+      index: 10
+`), 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	require.NoError(t, os.MkdirAll(filepath.Dir(generator.CachePath(repo, "local")), 0755))
+	require.NoError(t, os.WriteFile(generator.CachePath(repo, "local"), []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_before_target(ref = "api:migrate", config = "api/rpm.yml")
+rpm_target(ref = "api:alpha", config = "api/rpm.yml", env = {}, reload = True)
+rpm_target(ref = "api:zed", config = "api/rpm.yml", env = {}, reload = True)
+rpm_run(order = ["api:zed", "api:migrate", "api:alpha"])
+`), 0644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	action := NewEnvAction(repo, &out, &errOut)
+
+	err := action.Up(context.Background(), EnvUpOptions{
+		Blueprint:      "local",
+		NoDeps:         true,
+		NoReload:       true,
+		NonInteractive: true,
+	})
+
+	require.NoError(t, err, errOut.String())
+	assert.Equal(t, []string{"api:migrate", "api:alpha", "api:zed"}, processStartedRefs(t, out.String()))
+}
+
+func TestEnvUpRetainsInlineRunOrder(t *testing.T) {
+	repoRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "api"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "zed-ready"), []byte{}, 0644))
+	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+	require.NoError(t, os.MkdirAll(filepath.Dir(generator.CachePath(repo, "local")), 0755))
+	require.NoError(t, os.WriteFile(generator.CachePath(repo, "local"), []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_target(ref = "api:alpha", command = "echo alpha", workdir = "${REPO_ROOT}/api", env = {}, reload = True)
+rpm_target(ref = "api:zed", command = "echo zed", workdir = "${REPO_ROOT}/api", readiness_cmd = "test -f ${REPO_ROOT}/zed-ready", env = {}, reload = True)
+rpm_run(order = ["api:zed", "api:alpha"])
+`), 0644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	action := NewEnvAction(repo, &out, &errOut)
+
+	err := action.Up(context.Background(), EnvUpOptions{
+		Blueprint:      "local",
+		NoDeps:         true,
+		NoReload:       true,
+		NonInteractive: true,
+	})
+
+	require.NoError(t, err, errOut.String())
+	assert.Equal(t, []string{"api:zed", "api:alpha"}, processStartedRefs(t, out.String()))
 }
 
 func TestLoadPlanResolvesDepTargetsFromConfigRefs(t *testing.T) {
@@ -170,4 +246,36 @@ rpm_run(order = ["mongodb", "postgres", "rabbitmq", "redis"])
 	assert.Equal(t, "redis:7", plan.Dependencies[3].Image)
 	assert.Equal(t, []string{"REDIS_PORT=6379"}, plan.Dependencies[3].Ports)
 	assert.Equal(t, []string{"mongodb", "postgres", "rabbitmq", "redis"}, plan.RunOrder)
+}
+
+func TestControlSenderStopInvokesRuntimeStop(t *testing.T) {
+	actions := make(chan envruntime.ControlAction, 1)
+	calls := 0
+	sender := controlSender{
+		actions: actions,
+		stop: func() {
+			calls++
+		},
+	}
+
+	sender.Stop()
+
+	assert.Equal(t, 1, calls)
+	assert.Empty(t, actions)
+}
+
+func processStartedRefs(t *testing.T, output string) []string {
+	t.Helper()
+	refs := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		var event envruntime.Event
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event.Type == envruntime.EventProcessStarted {
+			refs = append(refs, event.Ref)
+		}
+	}
+	return refs
 }

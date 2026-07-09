@@ -159,9 +159,10 @@ func loadBundleConfig(path string, repoRoot string, repoDeps map[string]bool) *m
 					Enabled: *tc.Config.Dotenv.Enabled,
 					Files:   tc.Config.Dotenv.Files,
 				},
-				Reload: *tc.Config.Reload,
-				Ignore: tc.Config.Ignore,
-				Index:  tc.Config.Index,
+				Reload:       *tc.Config.Reload,
+				Ignore:       tc.Config.Ignore,
+				Index:        tc.Config.Index,
+				ReadinessCmd: tc.Config.ReadinessCmd,
 			},
 		}
 		bundle.Targets = append(bundle.Targets, target)

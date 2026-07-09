@@ -88,7 +88,8 @@ Bundle config options
 | `targets[].config.working_dir`    | string         | `local` | `local`, `repo_root` or a relative path                   |
 | `targets[].config.reload`         | bool           | `true`  | Restart on file change under `rpm env up`                 |
 | `targets[].config.ignore`         | list           | -       | Ignored globs for file watcher                            |
-| `targets[].config.index`          | int            | -       | Before target order under `rpm env up`                    |
+| `targets[].config.index`          | int            | `0`     | Before and main target startup order under `rpm env up`   |
+| `targets[].config.readiness-cmd`  | string         | -       | Optional initial `rpm env up` gate after target launch    |
 | `targets[].config.dotenv.enabled` | bool           | `true`  | Load `.env` from the working dir                          |
 | `targets[].config.dotenv.files`   | list           | -       | Additional dotenv files                                   |
 
@@ -112,6 +113,9 @@ targets:
     config:
       working_dir: local
       reload: true
+      index: -1
+      readiness-cmd: |
+        timeout 30 sh -c 'until curl -fsS http://localhost:8080/ready; do sleep 1; done'
 ```
 
 ## Environments

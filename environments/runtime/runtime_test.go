@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,6 +70,10 @@ func TestUpStartsDependenciesAndUsesEnabledWatches(t *testing.T) {
 	assert.Equal(t, 1, deps.upCalls)
 	assert.Equal(t, 1, watcher.calls)
 	assert.Equal(t, 10*time.Millisecond, watcher.debounce)
+	stopCtxErrs := processes.stopContextErrs("api:serve")
+	require.Len(t, stopCtxErrs, 1)
+	assert.NoError(t, stopCtxErrs[0])
+	assert.NoError(t, deps.downCtxErr)
 	require.Len(t, watcher.watches, 1)
 	assert.Equal(t, "api:serve", watcher.watches[0].Target)
 	assert.Contains(t, watcher.watches[0].Roots, "/repo/api")
@@ -103,6 +108,314 @@ func TestUpReturnsProcessStartupFailure(t *testing.T) {
 	err := runner.Up(context.Background(), testPlan())
 
 	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestUpRunsReadinessBetweenOrderedTargets(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	order := []string{}
+	processes := &fakeProcessRunner{block: true, order: &order}
+	readiness := &fakeReadinessRunner{order: &order}
+	events := &eventRecorder{order: &order}
+	plan := testPlan()
+	plan.Targets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first", ReadinessCmd: "check first"},
+		{Ref: "api:second", Command: "second", ReadinessCmd: " \t\n"},
+		{Ref: "api:third", Command: "third", ReadinessCmd: "check third"},
+	}
+	plan.RunOrder = []string{"api:first", "api:second", "api:third"}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		EventSink:       events,
+		NoDeps:          true,
+		NoReload:        true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 3 && len(readiness.refs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+
+	assert.Equal(t, []string{
+		"process api:first",
+		"event process_started api:first",
+		"readiness api:first",
+		"process api:second",
+		"event process_started api:second",
+		"process api:third",
+		"event process_started api:third",
+		"readiness api:third",
+	}, startupOrder(order))
+	assert.Equal(t, []string{"api:first", "api:third"}, readiness.refs())
+}
+
+func TestUpPassesWorkingDirectoryAndFinalEnvToReadiness(t *testing.T) {
+	processes := &fakeProcessRunner{}
+	readiness := &fakeReadinessRunner{}
+	plan := testPlan()
+	plan.Targets[0].ReadinessCmd = "check ready"
+	plan.Targets[0].WorkingDir = "/repo/api/service"
+	plan.Targets[0].Env["STATIC_VALUE"] = "configured"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		DependencyRunner: &fakeDependencyRunner{
+			env: map[string]string{"POSTGRES_PORT": "49152"},
+		},
+		NoReload: true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.NoError(t, err)
+	targets := readiness.targetsSnapshot()
+	require.Len(t, targets, 1)
+	assert.Equal(t, "/repo/api/service", targets[0].WorkingDir)
+	assert.Equal(t, "configured", targets[0].Env["STATIC_VALUE"])
+	assert.Equal(t, "49152", targets[0].Env["POSTGRES_PORT"])
+}
+
+func TestUpReadinessFailureStopsTargetAndBlocksLaterTargets(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	readiness := &fakeReadinessRunner{errs: map[string]error{"api:second": assert.AnError}}
+	deps := &fakeDependencyRunner{}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.Targets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first"},
+		{Ref: "api:second", Command: "second", ReadinessCmd: "check second"},
+		{Ref: "api:third", Command: "third"},
+	}
+	plan.RunOrder = []string{"api:first", "api:second", "api:third"}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		ReadinessRunner:  readiness,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+	})
+
+	err := runner.Up(context.Background(), plan)
+
+	require.ErrorIs(t, err, assert.AnError)
+	assert.ErrorContains(t, err, "api:second readiness check failed")
+	assert.Equal(t, []string{"api:first", "api:second"}, processes.startedRefs())
+	assert.Equal(t, 1, processes.stopCount("api:first"))
+	assert.Equal(t, 1, processes.stopCount("api:second"))
+	assert.Zero(t, processes.stopCount("api:third"))
+	assert.Equal(t, 1, deps.downCalls)
+	exits := events.byType(envruntime.EventProcessExited)
+	failed := []envruntime.Event{}
+	for _, event := range exits {
+		if event.Ref == "api:second" && event.Error != "" {
+			failed = append(failed, event)
+		}
+	}
+	require.Len(t, failed, 1)
+	assert.Contains(t, failed[0].Error, "api:second readiness check failed")
+}
+
+func TestInteractiveReadinessFailureHaltsInitialTargetsUntilQuit(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	readiness := &fakeReadinessRunner{errs: map[string]error{"api:second": assert.AnError}}
+	plan := testPlan()
+	plan.Targets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first"},
+		{Ref: "api:second", Command: "second", ReadinessCmd: "check second"},
+		{Ref: "api:third", Command: "third"},
+	}
+	plan.RunOrder = []string{"api:first", "api:second", "api:third"}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		NoDeps:          true,
+		NoReload:        true,
+		Interactive:     true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(readiness.refs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	require.Never(t, func() bool {
+		return len(processes.startedRefs()) > 2
+	}, 50*time.Millisecond, 10*time.Millisecond)
+	assert.Zero(t, processes.stopCount("api:first"))
+	assert.Equal(t, 1, processes.stopCount("api:second"))
+	runner.Stop()
+
+	require.ErrorIs(t, <-done, assert.AnError)
+	assert.Equal(t, []string{"api:first", "api:second"}, processes.startedRefs())
+	assert.Equal(t, 1, processes.stopCount("api:first"))
+	stopCtxErrs := processes.stopContextErrs("api:first")
+	require.Len(t, stopCtxErrs, 1)
+	assert.NoError(t, stopCtxErrs[0])
+}
+
+func TestRunnerStopCancelsBlockingReadinessWithoutFailure(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	readiness := &blockingReadinessRunner{started: make(chan struct{})}
+	deps := &fakeDependencyRunner{}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.Targets[0].ReadinessCmd = "wait forever"
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:    processes,
+		ReadinessRunner:  readiness,
+		DependencyRunner: deps,
+		EventSink:        events,
+		NoReload:         true,
+		Interactive:      true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), plan)
+	}()
+	select {
+	case <-readiness.started:
+	case <-time.After(time.Second):
+		t.Fatal("readiness did not start")
+	}
+	runner.Stop()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not stop")
+	}
+
+	assert.Equal(t, 1, processes.stopCount("api:serve"))
+	stopCtxErrs := processes.stopContextErrs("api:serve")
+	require.Len(t, stopCtxErrs, 1)
+	assert.NoError(t, stopCtxErrs[0])
+	assert.Equal(t, 1, deps.downCalls)
+	assert.NoError(t, deps.downCtxErr)
+	assert.Empty(t, events.byType(envruntime.EventProcessExited))
+	assert.Equal(t, []envruntime.Event{{
+		Type: envruntime.EventEnvironmentStopped,
+		Ref:  "local",
+	}}, events.byType(envruntime.EventEnvironmentStopped))
+}
+
+func TestRunnerStopDuringDependencyStartupSuppressesLifecycleEvents(t *testing.T) {
+	tests := []struct {
+		name          string
+		returnError   bool
+		expectedDowns int
+	}{
+		{name: "canceled startup", returnError: true},
+		{name: "completed startup", expectedDowns: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := &blockingDependencyStartup{
+				started:     make(chan struct{}),
+				returnError: tt.returnError,
+			}
+			events := &eventRecorder{}
+			runner := envruntime.NewRunner(envruntime.Options{
+				ProcessRunner:    &fakeProcessRunner{},
+				DependencyRunner: deps,
+				EventSink:        events,
+				NoReload:         true,
+				Interactive:      true,
+			})
+
+			done := make(chan error, 1)
+			go func() {
+				done <- runner.Up(context.Background(), testPlan())
+			}()
+			select {
+			case <-deps.started:
+			case <-time.After(time.Second):
+				t.Fatal("dependency startup did not start")
+			}
+			runner.Stop()
+
+			require.NoError(t, <-done)
+			assert.Empty(t, events.byType(envruntime.EventDependencyStarted))
+			assert.Empty(t, events.byType(envruntime.EventDependencyFailed))
+			assert.Equal(t, tt.expectedDowns, deps.downCalls)
+			assert.NoError(t, deps.downCtxErr)
+		})
+	}
+}
+
+func TestRunnerStopDuringBeforeTargetStartSuppressesFailureAndLaterStarts(t *testing.T) {
+	processes := &blockingProcessStart{started: make(chan struct{})}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.Dependencies = nil
+	plan.BeforeTargets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first"},
+		{Ref: "api:second", Command: "second"},
+	}
+	plan.Targets = nil
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		EventSink:     events,
+		NoReload:      true,
+		Interactive:   true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), plan)
+	}()
+	select {
+	case <-processes.started:
+	case <-time.After(time.Second):
+		t.Fatal("process startup did not start")
+	}
+	runner.Stop()
+
+	require.NoError(t, <-done)
+	assert.Equal(t, []string{"api:first"}, processes.startedRefs())
+	assert.Empty(t, events.byType(envruntime.EventProcessStarted))
+	assert.Empty(t, events.byType(envruntime.EventProcessExited))
+}
+
+func TestRunnerStopDuringBeforeTargetExecutionUsesLiveCleanupContext(t *testing.T) {
+	processes := &fakeProcessRunner{block: true}
+	events := &eventRecorder{}
+	plan := testPlan()
+	plan.Dependencies = nil
+	plan.BeforeTargets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first"},
+		{Ref: "api:second", Command: "second"},
+	}
+	plan.Targets = nil
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner: processes,
+		EventSink:     events,
+		NoReload:      true,
+		Interactive:   true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(context.Background(), plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 1
+	}, time.Second, 10*time.Millisecond)
+	runner.Stop()
+
+	require.NoError(t, <-done)
+	assert.Equal(t, []string{"api:first"}, processes.startedRefs())
+	stopCtxErrs := processes.stopContextErrs("api:first")
+	require.Len(t, stopCtxErrs, 1)
+	assert.NoError(t, stopCtxErrs[0])
+	assert.Empty(t, events.byType(envruntime.EventProcessExited))
 }
 
 func TestUpReturnsRuntimeFailureWithoutWaitingForUnrelatedProcess(t *testing.T) {
@@ -746,7 +1059,6 @@ func TestInteractiveMainTargetFailureKeepsOtherTargetsRunningUntilQuit(t *testin
 		blockRefs: map[string]bool{"api:serve": true},
 		waitErrs:  map[string]error{"worker:run": assert.AnError},
 	}
-	actions := make(chan envruntime.ControlAction, 1)
 	plan := testPlan()
 	plan.Targets = append(plan.Targets, envstarlark.TargetProcess{
 		Ref:        "worker:run",
@@ -755,10 +1067,9 @@ func TestInteractiveMainTargetFailureKeepsOtherTargetsRunningUntilQuit(t *testin
 	})
 	plan.RunOrder = []string{"api:serve", "worker:run"}
 	runner := envruntime.NewRunner(envruntime.Options{
-		ProcessRunner:  processes,
-		ControlActions: actions,
-		NoReload:       true,
-		Interactive:    true,
+		ProcessRunner: processes,
+		NoReload:      true,
+		Interactive:   true,
 	})
 
 	done := make(chan error, 1)
@@ -771,26 +1082,66 @@ func TestInteractiveMainTargetFailureKeepsOtherTargetsRunningUntilQuit(t *testin
 	require.Never(t, func() bool {
 		return processes.stopCount("api:serve") > 0
 	}, 50*time.Millisecond, 10*time.Millisecond)
-	actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
+	runner.Stop()
 
 	require.ErrorIs(t, <-done, assert.AnError)
 	assert.Equal(t, 1, processes.stopCount("api:serve"))
+}
+
+func TestRestartAndRestartAllDoNotRunReadinessAgain(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	processes := &fakeProcessRunner{block: true}
+	readiness := &fakeReadinessRunner{}
+	plan := testPlan()
+	plan.Targets = []envstarlark.TargetProcess{
+		{Ref: "api:first", Command: "first", ReadinessCmd: "check first"},
+		{Ref: "api:second", Command: "second", ReadinessCmd: "check second"},
+	}
+	plan.RunOrder = []string{"api:first", "api:second"}
+	runner := envruntime.NewRunner(envruntime.Options{
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		NoDeps:          true,
+		NoReload:        true,
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Up(ctx, plan)
+	}()
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 2 && len(readiness.refs()) == 2
+	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, runner.Restart(ctx, "api:first"))
+	require.NoError(t, runner.RestartAll(ctx))
+	require.Eventually(t, func() bool {
+		return len(processes.startedRefs()) == 5
+	}, time.Second, 10*time.Millisecond)
+	cancel()
+	require.NoError(t, <-done)
+
+	assert.Equal(t, []string{"api:first", "api:second"}, readiness.refs())
 }
 
 func TestWatcherChangeRestartsAffectedProcessOnly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	processes := &fakeProcessRunner{block: true}
+	readiness := &fakeReadinessRunner{}
 	watcher := &fakeWatcher{trigger: true, block: true, ready: make(chan struct{})}
+	plan := testPlan()
+	plan.Targets[0].ReadinessCmd = "check ready"
 	runner := envruntime.NewRunner(envruntime.Options{
-		ProcessRunner: processes,
-		ReloadWatcher: watcher,
-		EventSink:     &eventRecorder{},
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		ReloadWatcher:   watcher,
+		EventSink:       &eventRecorder{},
 	})
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Up(ctx, testPlan())
+		done <- runner.Up(ctx, plan)
 	}()
 	require.Eventually(t, func() bool {
 		return len(processes.startedRefs()) >= 2
@@ -799,6 +1150,7 @@ func TestWatcherChangeRestartsAffectedProcessOnly(t *testing.T) {
 	require.NoError(t, <-done)
 
 	assert.Equal(t, []string{"api:serve", "api:serve"}, processes.startedRefs())
+	assert.Equal(t, []string{"api:serve"}, readiness.refs())
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
@@ -806,17 +1158,21 @@ func TestControlActionRestartsSelectedTarget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	processes := &fakeProcessRunner{block: true}
+	readiness := &fakeReadinessRunner{}
 	actions := make(chan envruntime.ControlAction, 1)
+	plan := testPlan()
+	plan.Targets[0].ReadinessCmd = "check ready"
 	runner := envruntime.NewRunner(envruntime.Options{
-		ProcessRunner:  processes,
-		EventSink:      &eventRecorder{},
-		ControlActions: actions,
-		NoReload:       true,
+		ProcessRunner:   processes,
+		ReadinessRunner: readiness,
+		EventSink:       &eventRecorder{},
+		ControlActions:  actions,
+		NoReload:        true,
 	})
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Up(ctx, testPlan())
+		done <- runner.Up(ctx, plan)
 	}()
 	require.Eventually(t, func() bool {
 		return len(processes.startedRefs()) == 1
@@ -829,6 +1185,7 @@ func TestControlActionRestartsSelectedTarget(t *testing.T) {
 	require.NoError(t, <-done)
 
 	assert.Equal(t, []string{"api:serve", "api:serve"}, processes.startedRefs())
+	assert.Equal(t, []string{"api:serve"}, readiness.refs())
 	assert.GreaterOrEqual(t, processes.stopCount("api:serve"), 1)
 }
 
@@ -880,14 +1237,13 @@ func TestControlActionRestartDoesNotFlickerFailedWhenStopErrors(t *testing.T) {
 	assert.Empty(t, reloads[len(reloads)-1].Error)
 }
 
-func TestControlActionStopsEnvironment(t *testing.T) {
+func TestRunnerStopStopsRunningEnvironment(t *testing.T) {
 	processes := &fakeProcessRunner{block: true}
-	actions := make(chan envruntime.ControlAction, 1)
 	runner := envruntime.NewRunner(envruntime.Options{
-		ProcessRunner:  processes,
-		EventSink:      &eventRecorder{},
-		ControlActions: actions,
-		NoReload:       true,
+		ProcessRunner: processes,
+		EventSink:     &eventRecorder{},
+		NoReload:      true,
+		Interactive:   true,
 	})
 
 	done := make(chan error, 1)
@@ -897,7 +1253,7 @@ func TestControlActionStopsEnvironment(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(processes.startedRefs()) == 1
 	}, time.Second, 10*time.Millisecond)
-	actions <- envruntime.ControlAction{Type: envruntime.ActionStop}
+	runner.Stop()
 
 	require.NoError(t, <-done)
 	assert.Equal(t, 1, processes.stopCount("api:serve"))
@@ -929,14 +1285,15 @@ func testPlan() *envstarlark.RuntimePlan {
 }
 
 type fakeProcessRunner struct {
-	mu        sync.Mutex
-	started   []envstarlark.TargetProcess
-	stopped   map[string]int
-	startErr  error
-	block     bool
-	blockRefs map[string]bool
-	waitErrs  map[string]error
-	order     *[]string
+	mu          sync.Mutex
+	started     []envstarlark.TargetProcess
+	stopped     map[string]int
+	stopCtxErrs map[string][]error
+	startErr    error
+	block       bool
+	blockRefs   map[string]bool
+	waitErrs    map[string]error
+	order       *[]string
 }
 
 func (r *fakeProcessRunner) Start(ctx context.Context, target envstarlark.TargetProcess, sink envruntime.EventSink) (envruntime.Process, error) {
@@ -950,6 +1307,9 @@ func (r *fakeProcessRunner) Start(ctx context.Context, target envstarlark.Target
 	}
 	if r.stopped == nil {
 		r.stopped = make(map[string]int)
+	}
+	if r.stopCtxErrs == nil {
+		r.stopCtxErrs = make(map[string][]error)
 	}
 	r.mu.Unlock()
 	return &fakeProcess{
@@ -977,6 +1337,97 @@ func (r *fakeProcessRunner) stopCount(ref string) int {
 	return r.stopped[ref]
 }
 
+func (r *fakeProcessRunner) stopContextErrs(ref string) []error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]error{}, r.stopCtxErrs[ref]...)
+}
+
+type fakeReadinessRunner struct {
+	mu      sync.Mutex
+	targets []envstarlark.TargetProcess
+	errs    map[string]error
+	order   *[]string
+}
+
+func (r *fakeReadinessRunner) Run(_ context.Context, target envstarlark.TargetProcess, _ envruntime.EventSink) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.targets = append(r.targets, target)
+	if r.order != nil {
+		*r.order = append(*r.order, "readiness "+target.Ref)
+	}
+	return r.errs[target.Ref]
+}
+
+func (r *fakeReadinessRunner) refs() []string {
+	targets := r.targetsSnapshot()
+	refs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		refs = append(refs, target.Ref)
+	}
+	return refs
+}
+
+func (r *fakeReadinessRunner) targetsSnapshot() []envstarlark.TargetProcess {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]envstarlark.TargetProcess{}, r.targets...)
+}
+
+type blockingReadinessRunner struct {
+	started chan struct{}
+}
+
+func (r *blockingReadinessRunner) Run(ctx context.Context, _ envstarlark.TargetProcess, _ envruntime.EventSink) error {
+	close(r.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type blockingDependencyStartup struct {
+	started     chan struct{}
+	returnError bool
+	downCalls   int
+	downCtxErr  error
+}
+
+func (r *blockingDependencyStartup) Up(ctx context.Context, _ string, _ *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
+	close(r.started)
+	<-ctx.Done()
+	if r.returnError {
+		return envruntime.DependencyStartup{}, ctx.Err()
+	}
+	return envruntime.DependencyStartup{}, nil
+}
+
+func (r *blockingDependencyStartup) Down(ctx context.Context, _ string, _ *envstarlark.RuntimePlan) error {
+	r.downCalls++
+	r.downCtxErr = ctx.Err()
+	return nil
+}
+
+type blockingProcessStart struct {
+	mu      sync.Mutex
+	started chan struct{}
+	refs    []string
+}
+
+func (r *blockingProcessStart) Start(ctx context.Context, target envstarlark.TargetProcess, _ envruntime.EventSink) (envruntime.Process, error) {
+	r.mu.Lock()
+	r.refs = append(r.refs, target.Ref)
+	close(r.started)
+	r.mu.Unlock()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (r *blockingProcessStart) startedRefs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string{}, r.refs...)
+}
+
 type fakeProcess struct {
 	ref     string
 	runner  *fakeProcessRunner
@@ -993,20 +1444,22 @@ func (p *fakeProcess) Wait() error {
 	return p.waitErr
 }
 
-func (p *fakeProcess) Stop(context.Context) error {
+func (p *fakeProcess) Stop(ctx context.Context) error {
 	p.runner.mu.Lock()
 	p.runner.stopped[p.ref]++
+	p.runner.stopCtxErrs[p.ref] = append(p.runner.stopCtxErrs[p.ref], ctx.Err())
 	p.runner.mu.Unlock()
 	p.once.Do(func() { close(p.done) })
 	return nil
 }
 
 type fakeDependencyRunner struct {
-	upCalls   int
-	downCalls int
-	order     *[]string
-	env       map[string]string
-	upErr     error
+	upCalls    int
+	downCalls  int
+	downCtxErr error
+	order      *[]string
+	env        map[string]string
+	upErr      error
 }
 
 func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
@@ -1020,8 +1473,9 @@ func (r *fakeDependencyRunner) Up(context.Context, string, *envstarlark.RuntimeP
 	return envruntime.DependencyStartup{Env: r.env}, nil
 }
 
-func (r *fakeDependencyRunner) Down(context.Context, string, *envstarlark.RuntimePlan) error {
+func (r *fakeDependencyRunner) Down(ctx context.Context, _ string, _ *envstarlark.RuntimePlan) error {
 	r.downCalls++
+	r.downCtxErr = ctx.Err()
 	if r.order != nil {
 		*r.order = append(*r.order, "deps down")
 	}
@@ -1100,4 +1554,14 @@ func (r *eventRecorder) outputLines(ref string, stream string) []string {
 		}
 	}
 	return lines
+}
+
+func startupOrder(order []string) []string {
+	result := []string{}
+	for _, item := range order {
+		if strings.HasPrefix(item, "process ") || strings.HasPrefix(item, "readiness ") || strings.HasPrefix(item, "event process_started ") {
+			result = append(result, item)
+		}
+	}
+	return result
 }

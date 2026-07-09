@@ -66,6 +66,7 @@ targets:
       FROM_TARGET: target
       OVERRIDE: target
     config:
+      readiness-cmd: test -f /tmp/api-ready
       dotenv:
         enabled: true
         files:
@@ -100,6 +101,7 @@ targets:
 	resolved, err := spec.Resolve(repo, blueprint)
 	require.NoError(t, err)
 	require.Len(t, resolved.Targets, 1)
+	assert.Equal(t, "test -f /tmp/api-ready", resolved.Targets[0].ReadinessCmd)
 	dotenvValues := envMap(resolved.Targets[0].DotenvEnv)
 	assert.Equal(t, map[string]string{
 		"FROM_DOTENV":       "base",
@@ -173,79 +175,116 @@ targets:
 	}, resolved.RuntimeUnits)
 }
 
-func TestResolveOrdersBeforeTargetsByConfigIndex(t *testing.T) {
-	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
-	bundleRoot := filepath.Join(repoRoot, "api")
-	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
+func TestResolveOrdersTargetsByConfigIndex(t *testing.T) {
+	orderedRefs := []string{
+		"api:negative",
+		"api:zero-a",
+		"api:zero-b",
+		"api:positive",
+		"api:tie-a",
+		"api:tie-z",
+	}
+	shuffledRefs := []string{
+		"api:tie-z",
+		"api:positive",
+		"api:zero-b",
+		"api:negative",
+		"api:tie-a",
+		"api:zero-a",
+	}
+	tests := []struct {
+		name            string
+		before          []string
+		targets         []models.EnvironmentTarget
+		expectedBefore  []string
+		expectedTargets []string
+		expectedUnits   []spec.RuntimeUnit
+	}{
+		{
+			name:            "environment targets",
+			before:          []string{"api:phase"},
+			targets:         environmentTargets(shuffledRefs),
+			expectedBefore:  []string{"api:phase"},
+			expectedTargets: orderedRefs,
+			expectedUnits: []spec.RuntimeUnit{
+				{Id: "api:phase", Kind: "before"},
+				{Id: "api:negative", Kind: "target"},
+				{Id: "api:zero-a", Kind: "target"},
+				{Id: "api:zero-b", Kind: "target"},
+				{Id: "api:positive", Kind: "target"},
+				{Id: "api:tie-a", Kind: "target"},
+				{Id: "api:tie-z", Kind: "target"},
+			},
+		},
+		{
+			name:            "before targets",
+			before:          shuffledRefs,
+			targets:         environmentTargets([]string{"api:serve"}),
+			expectedBefore:  orderedRefs,
+			expectedTargets: []string{"api:serve"},
+			expectedUnits: []spec.RuntimeUnit{
+				{Id: "api:negative", Kind: "before"},
+				{Id: "api:zero-a", Kind: "before"},
+				{Id: "api:zero-b", Kind: "before"},
+				{Id: "api:positive", Kind: "before"},
+				{Id: "api:tie-a", Kind: "before"},
+				{Id: "api:tie-z", Kind: "before"},
+				{Id: "api:serve", Kind: "target"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
+			bundleRoot := filepath.Join(repoRoot, "api")
+			require.NoError(t, os.MkdirAll(bundleRoot, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
 name: api
 targets:
+  - name: phase
+    cmd: echo phase
+    config:
+      index: 100
   - name: serve
     cmd: echo serve
-  - name: seed
-    cmd: echo seed
-  - name: init-db
-    cmd: echo init
     config:
-      index: 1
-  - name: migrate
-    cmd: echo migrate
+      index: -100
+  - name: tie-z
+    cmd: echo tie-z
     config:
       index: 2
-  - name: cleanup
-    cmd: echo cleanup
-`), 0644))
-	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
-	blueprint := &models.EnvironmentBlueprint{
-		Name:    "local",
-		Before:  []string{"api:seed", "api:init-db", "api:migrate", "api:cleanup"},
-		Targets: []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
-	}
-
-	resolved, err := spec.Resolve(repo, blueprint)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"api:init-db", "api:migrate", "api:cleanup", "api:seed"}, beforeRefs(resolved.BeforeTargets))
-	assert.Equal(t, []spec.RuntimeUnit{
-		{Id: "api:init-db", Kind: "before"},
-		{Id: "api:migrate", Kind: "before"},
-		{Id: "api:cleanup", Kind: "before"},
-		{Id: "api:seed", Kind: "before"},
-		{Id: "api:serve", Kind: "target"},
-	}, resolved.RuntimeUnits)
-}
-
-func TestResolveOrdersBeforeTargetIndexTiesByRef(t *testing.T) {
-	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
-	bundleRoot := filepath.Join(repoRoot, "api")
-	require.NoError(t, os.MkdirAll(bundleRoot, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(bundleRoot, "rpm.yml"), []byte(`
-name: api
-targets:
-  - name: serve
-    cmd: echo serve
-  - name: zed
-    cmd: echo zed
+  - name: positive
+    cmd: echo positive
     config:
       index: 1
-  - name: alpha
-    cmd: echo alpha
+  - name: zero-b
+    cmd: echo zero-b
     config:
-      index: 1
+      index: 0
+  - name: negative
+    cmd: echo negative
+    config:
+      index: -1
+  - name: tie-a
+    cmd: echo tie-a
+    config:
+      index: 2
+  - name: zero-a
+    cmd: echo zero-a
 `), 0644))
-	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
-	blueprint := &models.EnvironmentBlueprint{
-		Name:    "local",
-		Before:  []string{"api:zed", "api:alpha"},
-		Targets: []models.EnvironmentTarget{{Ref: "api:serve", Env: map[string]string{}}},
+			repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
+			blueprint := &models.EnvironmentBlueprint{Name: "local", Before: tt.before, Targets: tt.targets}
+
+			resolved, err := spec.Resolve(repo, blueprint)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedBefore, beforeRefs(resolved.BeforeTargets))
+			assert.Equal(t, tt.expectedTargets, targetRefs(resolved.Targets))
+			assert.Equal(t, tt.expectedUnits, resolved.RuntimeUnits)
+		})
 	}
-
-	resolved, err := spec.Resolve(repo, blueprint)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"api:alpha", "api:zed"}, beforeRefs(resolved.BeforeTargets))
 }
 
 func TestResolveRejectsInvalidBeforeTargets(t *testing.T) {
@@ -458,29 +497,6 @@ targets:
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown dep target ref")
-}
-
-func TestResolveSortsEnvironmentTargets(t *testing.T) {
-	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: test-project\nshell: /bin/sh\n"), 0644))
-	writeBundle(t, repoRoot, "z", "z")
-	writeBundle(t, repoRoot, "a", "a")
-	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
-	blueprint := &models.EnvironmentBlueprint{
-		Name: "local",
-		ReloadPolicy: models.ReloadPolicy{
-			Enabled: true,
-		},
-		Targets: []models.EnvironmentTarget{
-			{Ref: "z:serve", Env: map[string]string{}},
-			{Ref: "a:serve", Env: map[string]string{}},
-		},
-	}
-
-	resolved, err := spec.Resolve(repo, blueprint)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"a:serve", "z:serve"}, []string{resolved.Targets[0].Ref, resolved.Targets[1].Ref})
 }
 
 func TestResolveOmitsBundleDependenciesWhenPolicyDisabled(t *testing.T) {
@@ -721,6 +737,22 @@ func beforeRefs(targets []spec.BeforeTarget) []string {
 		refs = append(refs, target.Ref)
 	}
 	return refs
+}
+
+func targetRefs(targets []spec.Target) []string {
+	refs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		refs = append(refs, target.Ref)
+	}
+	return refs
+}
+
+func environmentTargets(refs []string) []models.EnvironmentTarget {
+	targets := make([]models.EnvironmentTarget, 0, len(refs))
+	for _, ref := range refs {
+		targets = append(targets, models.EnvironmentTarget{Ref: ref, Env: map[string]string{}})
+	}
+	return targets
 }
 
 func dependencyRefs(dependencies []spec.Dependency) []string {

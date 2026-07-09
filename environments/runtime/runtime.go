@@ -28,6 +28,10 @@ type ProcessRunner interface {
 	Start(ctx context.Context, target envstarlark.TargetProcess, sink EventSink) (Process, error)
 }
 
+type ReadinessRunner interface {
+	Run(ctx context.Context, target envstarlark.TargetProcess, sink EventSink) error
+}
+
 type Process interface {
 	Wait() error
 	Stop(ctx context.Context) error
@@ -102,11 +106,11 @@ const (
 
 	ActionRestartTarget = "restart_target"
 	ActionRestartAll    = "restart_all"
-	ActionStop          = "stop_environment"
 )
 
 type Options struct {
 	ProcessRunner    ProcessRunner
+	ReadinessRunner  ReadinessRunner
 	DependencyRunner DependencyRunner
 	ReloadWatcher    ReloadWatcher
 	EventSink        EventSink
@@ -140,7 +144,11 @@ func NewRunner(opts Options) *Runner {
 func (r *Runner) setCancel(cancel context.CancelFunc) {
 	r.mu.Lock()
 	r.cancel = cancel
+	stopping := r.stopping
 	r.mu.Unlock()
+	if stopping {
+		cancel()
+	}
 }
 
 func (r *Runner) setPlan(plan *envstarlark.RuntimePlan) {
@@ -202,18 +210,30 @@ func (r *Runner) startupSteps() []startupStep {
 }
 
 func (r *Runner) startDependencies(ctx context.Context, state *startupContext) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if r.opts.DependencyRunner == nil || r.opts.NoDeps || len(state.plan.Dependencies) == 0 {
 		return nil
 	}
 	startup, err := r.opts.DependencyRunner.Up(ctx, state.plan.Environment.Name, state.plan)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.emitDependencyFailure(state.plan, err)
 		return err
 	}
 	state.plan = planWithDependencyEnv(state.plan, startup.Env)
 	state.startedDeps = true
 	r.setPlan(state.plan)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	for _, dep := range state.plan.Dependencies {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.opts.EventSink.Emit(Event{Type: EventDependencyStarted, Ref: dep.Ref})
 	}
 	return nil
@@ -221,6 +241,9 @@ func (r *Runner) startDependencies(ctx context.Context, state *startupContext) e
 
 func (r *Runner) runBeforeTargets(ctx context.Context, state *startupContext) error {
 	for _, target := range state.plan.BeforeTargets {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err := r.runBlockingTarget(ctx, target); err != nil {
 			return err
 		}
@@ -230,6 +253,9 @@ func (r *Runner) runBeforeTargets(ctx context.Context, state *startupContext) er
 
 func (r *Runner) runDepTargets(ctx context.Context, state *startupContext) error {
 	for _, target := range state.plan.DepTargets {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err := r.runBlockingTarget(ctx, target); err != nil {
 			return err
 		}
@@ -239,15 +265,27 @@ func (r *Runner) runDepTargets(ctx context.Context, state *startupContext) error
 
 func (r *Runner) startTargets(ctx context.Context, state *startupContext) error {
 	for _, ref := range targetOrder(state.plan) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		target, ok := targetByRef(state.plan, ref)
 		if !ok {
 			continue
 		}
 		if err := r.startTarget(ctx, target); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if r.opts.Interactive {
 				state.recordedErr = firstErr(state.recordedErr, err)
 				continue
 			}
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := r.runReadiness(ctx, target); err != nil {
 			return err
 		}
 	}
@@ -285,13 +323,20 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	ctx, cancel := context.WithCancel(ctx)
 	r.setCancel(cancel)
 	defer cancel()
-	defer func() { r.shutdown(ctx) }()
+	defer func() { r.shutdown(context.WithoutCancel(ctx)) }()
 	r.declareUnits(plan)
 	r.setPlan(plan)
 
 	state := &startupContext{plan: plan, watchCancel: func() {}}
 	for _, step := range r.startupSteps() {
-		if err := step.run(ctx, state); err != nil {
+		if ctx.Err() != nil {
+			return r.stopStartup(ctx, state)
+		}
+		err := step.run(ctx, state)
+		if ctx.Err() != nil {
+			return r.stopStartup(ctx, state)
+		}
+		if err != nil {
 			if r.opts.Interactive {
 				return r.waitForQuitAfterError(ctx, state.plan, err, state.startedDeps)
 			}
@@ -315,19 +360,16 @@ func (r *Runner) Up(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 		}
 		select {
 		case <-ctx.Done():
-			r.stopProcesses(ctx)
-			r.stopDependencies(ctx, plan, startedDeps)
+			cleanupCtx := context.WithoutCancel(ctx)
+			r.stopProcesses(cleanupCtx)
+			r.stopDependencies(cleanupCtx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return recordedErr
 		case action, ok := <-r.opts.ControlActions:
 			if !ok {
 				continue
 			}
-			if r.handleControlAction(ctx, plan, action) {
-				r.stopDependencies(ctx, plan, startedDeps)
-				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
-				return recordedErr
-			}
+			r.handleControlAction(ctx, plan, action)
 		case exit := <-r.done:
 			if exit.ref != "" {
 				if !r.removeProcess(exit.ref, exit.process) {
@@ -393,14 +435,22 @@ func (r *Runner) RestartAll(ctx context.Context) error {
 
 func (r *Runner) Stop() {
 	r.mu.Lock()
-	cancel := r.cancel
-	r.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	r.stopping = true
+	if r.cancel != nil {
+		r.cancel()
 	}
+	r.mu.Unlock()
 }
 
-func (r *Runner) handleControlAction(ctx context.Context, plan *envstarlark.RuntimePlan, action ControlAction) bool {
+func (r *Runner) stopStartup(ctx context.Context, state *startupContext) error {
+	cleanupCtx := context.WithoutCancel(ctx)
+	r.stopProcesses(cleanupCtx)
+	r.stopDependencies(cleanupCtx, state.plan, state.startedDeps)
+	r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: state.plan.Environment.Name})
+	return state.recordedErr
+}
+
+func (r *Runner) handleControlAction(ctx context.Context, plan *envstarlark.RuntimePlan, action ControlAction) {
 	switch action.Type {
 	case ActionRestartTarget:
 		if action.Ref != "" {
@@ -410,11 +460,7 @@ func (r *Runner) handleControlAction(ctx context.Context, plan *envstarlark.Runt
 		for _, ref := range targetOrder(plan) {
 			r.reloadTarget(ctx, plan, ref, "tui")
 		}
-	case ActionStop:
-		r.stopProcesses(ctx)
-		return true
 	}
-	return false
 }
 
 type processExit struct {
@@ -471,6 +517,13 @@ func (r *Runner) stopProcesses(ctx context.Context) {
 	}
 }
 
+func (r *Runner) stopProcess(ctx context.Context, ref string) {
+	if process := r.processSnapshot()[ref]; process != nil {
+		_ = process.Stop(ctx)
+		r.removeProcess(ref, process)
+	}
+}
+
 func (r *Runner) Down(ctx context.Context, plan *envstarlark.RuntimePlan) error {
 	if r.opts.DependencyRunner != nil {
 		if err := r.opts.DependencyRunner.Down(ctx, plan.Environment.Name, plan); err != nil {
@@ -482,19 +535,25 @@ func (r *Runner) Down(ctx context.Context, plan *envstarlark.RuntimePlan) error 
 }
 
 func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProcess) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
 		return err
 	}
 	r.mu.Lock()
-	if r.stopping {
+	if r.stopping || ctx.Err() != nil {
 		r.mu.Unlock()
-		_ = process.Stop(ctx)
-		return nil
+		_ = process.Stop(context.WithoutCancel(ctx))
+		return ctx.Err()
 	}
 	r.processes[target.Ref] = process
 	r.wg.Add(1)
@@ -503,21 +562,67 @@ func (r *Runner) startTarget(ctx context.Context, target envstarlark.TargetProce
 		defer r.wg.Done()
 		r.emitExit(processExit{ref: target.Ref, process: process, err: process.Wait()})
 	}()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	r.opts.EventSink.Emit(Event{Type: EventProcessStarted, Ref: target.Ref})
 	return nil
 }
 
+func (r *Runner) runReadiness(ctx context.Context, target envstarlark.TargetProcess) error {
+	if strings.TrimSpace(target.ReadinessCmd) == "" {
+		return nil
+	}
+	err := fmt.Errorf("readiness runner is required")
+	if r.opts.ReadinessRunner != nil {
+		err = r.opts.ReadinessRunner.Run(ctx, target, r.opts.EventSink)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err == nil {
+		return nil
+	}
+	err = errors.Wrapf(err, "%s readiness check failed", target.Ref)
+	r.stopProcess(ctx, target.Ref)
+	r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
+	return err
+}
+
 func (r *Runner) runBlockingTarget(ctx context.Context, target envstarlark.TargetProcess) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if r.opts.ProcessRunner == nil {
 		return fmt.Errorf("process runner is required")
 	}
 	process, err := r.opts.ProcessRunner.Start(ctx, target, r.opts.EventSink)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.opts.EventSink.Emit(Event{Type: EventProcessExited, Ref: target.Ref, Error: err.Error()})
 		return err
 	}
+	if ctx.Err() != nil {
+		_ = process.Stop(context.WithoutCancel(ctx))
+		return ctx.Err()
+	}
 	r.opts.EventSink.Emit(Event{Type: EventProcessStarted, Ref: target.Ref})
-	err = process.Wait()
+	wait := make(chan error, 1)
+	go func() {
+		wait <- process.Wait()
+	}()
+	select {
+	case err = <-wait:
+	case <-ctx.Done():
+		_ = process.Stop(context.WithoutCancel(ctx))
+		<-wait
+		return ctx.Err()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	event := Event{Type: EventProcessExited, Ref: target.Ref}
 	if err != nil {
 		event.Error = err.Error()
@@ -554,6 +659,8 @@ type ShellProcessRunner struct {
 	err   io.Writer
 }
 
+const shellProcessWaitDelay = 2 * time.Second
+
 func NewShellProcessRunner(shell string, out io.Writer, err io.Writer) *ShellProcessRunner {
 	return &ShellProcessRunner{shell: shell, out: out, err: err}
 }
@@ -571,36 +678,35 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Dir = target.WorkingDir
 	cmd.Env = processEnv(target.Env)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdout.Close()
-		return nil, err
-	}
+	stdout := &lineEventWriter{sink: sink, ref: target.Ref, stream: "stdout"}
+	stderr := &lineEventWriter{sink: sink, ref: target.Ref, stream: "stderr"}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.WaitDelay = shellProcessWaitDelay
 	if err := cmd.Start(); err != nil {
-		_ = stdout.Close()
-		_ = stderr.Close()
 		return nil, err
 	}
-	stdoutDone := make(chan struct{})
-	stderrDone := make(chan struct{})
-	go scanOutput(target.Ref, "stdout", stdout, sink, stdoutDone)
-	go scanOutput(target.Ref, "stderr", stderr, sink, stderrDone)
-	process := &shellProcess{cmd: cmd, waitDone: make(chan struct{}), stdoutDone: stdoutDone, stderrDone: stderrDone}
+	process := &shellProcess{cmd: cmd, waitDone: make(chan struct{}), stdout: stdout, stderr: stderr}
 	go process.wait()
 	return process, nil
 }
 
+func (r *ShellProcessRunner) Run(ctx context.Context, target envstarlark.TargetProcess, sink EventSink) error {
+	target.Command = target.ReadinessCmd
+	process, err := r.Start(ctx, target, sink)
+	if err != nil {
+		return err
+	}
+	return process.Wait()
+}
+
 type shellProcess struct {
-	cmd        *exec.Cmd
-	waitDone   chan struct{}
-	stdoutDone chan struct{}
-	stderrDone chan struct{}
-	waitErr    error
-	once       sync.Once
+	cmd      *exec.Cmd
+	waitDone chan struct{}
+	stdout   *lineEventWriter
+	stderr   *lineEventWriter
+	waitErr  error
+	once     sync.Once
 }
 
 func (p *shellProcess) Wait() error {
@@ -616,7 +722,7 @@ func (p *shellProcess) Stop(ctx context.Context) error {
 	select {
 	case <-p.waitDone:
 		return nil
-	case <-time.After(2 * time.Second):
+	case <-time.After(shellProcessWaitDelay):
 		_ = p.cmd.Process.Kill()
 	case <-ctx.Done():
 		_ = p.cmd.Process.Kill()
@@ -628,8 +734,8 @@ func (p *shellProcess) Stop(ctx context.Context) error {
 func (p *shellProcess) wait() {
 	p.once.Do(func() {
 		p.waitErr = p.cmd.Wait()
-		<-p.stdoutDone
-		<-p.stderrDone
+		p.stdout.flush()
+		p.stderr.flush()
 		close(p.waitDone)
 	})
 }
@@ -679,11 +785,36 @@ func (w PrefixWriter) Write(data []byte) (int, error) {
 	return len(data), scanner.Err()
 }
 
-func scanOutput(ref string, stream string, reader io.Reader, sink EventSink, done chan<- struct{}) {
-	defer close(done)
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		sink.Emit(Event{Type: EventProcessOutput, Ref: ref, Stream: stream, Line: scanner.Text()})
+type lineEventWriter struct {
+	sink    EventSink
+	ref     string
+	stream  string
+	mu      sync.Mutex
+	pending []byte
+}
+
+func (w *lineEventWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending = append(w.pending, data...)
+	w.emitLines(false)
+	return len(data), nil
+}
+
+func (w *lineEventWriter) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.emitLines(true)
+}
+
+func (w *lineEventWriter) emitLines(atEOF bool) {
+	for len(w.pending) > 0 {
+		advance, line, _ := bufio.ScanLines(w.pending, atEOF)
+		if advance == 0 {
+			return
+		}
+		w.sink.Emit(Event{Type: EventProcessOutput, Ref: w.ref, Stream: w.stream, Line: string(line)})
+		w.pending = w.pending[advance:]
 	}
 }
 
@@ -802,19 +933,16 @@ func (r *Runner) waitForQuitAfterError(ctx context.Context, plan *envstarlark.Ru
 	for {
 		select {
 		case <-ctx.Done():
-			r.stopProcesses(ctx)
-			r.stopDependencies(ctx, plan, startedDeps)
+			cleanupCtx := context.WithoutCancel(ctx)
+			r.stopProcesses(cleanupCtx)
+			r.stopDependencies(cleanupCtx, plan, startedDeps)
 			r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
 			return err
 		case action, ok := <-r.opts.ControlActions:
 			if !ok {
 				continue
 			}
-			if r.handleControlAction(ctx, plan, action) {
-				r.stopDependencies(ctx, plan, startedDeps)
-				r.opts.EventSink.Emit(Event{Type: EventEnvironmentStopped, Ref: plan.Environment.Name})
-				return err
-			}
+			r.handleControlAction(ctx, plan, action)
 		case exit := <-r.done:
 			if exit.ref == "" {
 				continue

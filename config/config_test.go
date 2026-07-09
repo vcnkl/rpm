@@ -513,6 +513,7 @@ targets:
     cmd: echo serve
     config:
       index: 3
+      readiness-cmd: curl --fail http://localhost:8080/health
 `), 0644))
 
 	cfg := NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
@@ -523,6 +524,7 @@ targets:
 	if assert.NotNil(t, cfg.Bundles()["api"].Targets[0].Config.Index) {
 		assert.Equal(t, 3, *cfg.Bundles()["api"].Targets[0].Config.Index)
 	}
+	assert.Equal(t, "curl --fail http://localhost:8080/health", cfg.Bundles()["api"].Targets[0].Config.ReadinessCmd)
 }
 
 func TestDiscoverBundlesSortedByRepoRelativePath(t *testing.T) {

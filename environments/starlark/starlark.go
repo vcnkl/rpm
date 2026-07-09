@@ -46,14 +46,15 @@ type Dependency struct {
 }
 
 type TargetProcess struct {
-	Ref         string
-	ConfigPath  string
-	Command     string
-	WorkingDir  string
-	Env         map[string]string
-	DotenvEnv   map[string]string
-	DotenvFiles []string
-	Reload      bool
+	Ref          string
+	ConfigPath   string
+	Command      string
+	WorkingDir   string
+	ReadinessCmd string
+	Env          map[string]string
+	DotenvEnv    map[string]string
+	DotenvFiles  []string
+	Reload       bool
 }
 
 type Watch struct {
@@ -188,7 +189,7 @@ func rpmDependency(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gosta
 }
 
 func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlark.Tuple, kwargs []gostarlark.Tuple) (gostarlark.Value, error) {
-	var ref, configPath, command, workdir string
+	var ref, configPath, command, workdir, readinessCmd string
 	var reload bool
 	var envValue gostarlark.Value
 	if err := unpackKwargs(fn.Name(), args, kwargs,
@@ -196,6 +197,7 @@ func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlar
 		"config?", &configPath,
 		"command?", &command,
 		"workdir?", &workdir,
+		"readiness_cmd?", &readinessCmd,
 		"env?", &envValue,
 		"reload", &reload,
 	); err != nil {
@@ -212,7 +214,7 @@ func rpmTarget(thread *gostarlark.Thread, fn *gostarlark.Builtin, args gostarlar
 		}
 	}
 	b.targets = append(b.targets, TargetProcess{
-		Ref: ref, ConfigPath: configPath, Command: command, WorkingDir: workdir, Env: env, Reload: reload,
+		Ref: ref, ConfigPath: configPath, Command: command, WorkingDir: workdir, ReadinessCmd: readinessCmd, Env: env, Reload: reload,
 	})
 	return gostarlark.None, nil
 }

@@ -13,11 +13,12 @@ type Target struct {
 }
 
 type TargetConfig struct {
-	WorkingDir string
-	Dotenv     DotenvConfig
-	Reload     bool
-	Ignore     []string
-	Index      *int
+	WorkingDir   string
+	Dotenv       DotenvConfig
+	Reload       bool
+	Ignore       []string
+	Index        *int
+	ReadinessCmd string
 }
 
 type DotenvConfig struct {

@@ -89,7 +89,7 @@ func Render(env *spec.ResolvedEnvironment) ([]byte, error) {
 	for _, dep := range env.DepTargets {
 		order = append(order, dep.Ref)
 	}
-	for _, target := range targets {
+	for _, target := range env.Targets {
 		order = append(order, target.Ref)
 	}
 	writeCall(&buf, "rpm_run", []field{{name: "order", value: orderedStringList(order)}})

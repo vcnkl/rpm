@@ -32,17 +32,18 @@ type Bundle struct {
 }
 
 type Target struct {
-	Ref         string
-	ConfigPath  string
-	Command     string
-	WorkingDir  string
-	Env         []EnvVar
-	ExplicitEnv []EnvVar
-	OverrideEnv []EnvVar
-	DotenvEnv   []EnvVar
-	Reload      bool
-	Watch       Watch
-	Dotenv      Dotenv
+	Ref          string
+	ConfigPath   string
+	Command      string
+	WorkingDir   string
+	ReadinessCmd string
+	Env          []EnvVar
+	ExplicitEnv  []EnvVar
+	OverrideEnv  []EnvVar
+	DotenvEnv    []EnvVar
+	Reload       bool
+	Watch        Watch
+	Dotenv       Dotenv
 }
 
 type BeforeTarget struct {
@@ -57,7 +58,17 @@ type BeforeTarget struct {
 
 type resolvedBeforeTarget struct {
 	target BeforeTarget
-	index  *int
+	order  targetOrder
+}
+
+type resolvedTarget struct {
+	target Target
+	order  targetOrder
+}
+
+type targetOrder struct {
+	ref   string
+	index *int
 }
 
 type Dependency struct {
@@ -172,15 +183,19 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 		}
 		target := resolveBeforeTarget(repo, blueprint, targetConfig)
 		addBundle(repo.Bundles()[targetConfig.BundleName])
-		beforeTargets = append(beforeTargets, resolvedBeforeTarget{target: target, index: targetConfig.Config.Index})
+		beforeTargets = append(beforeTargets, resolvedBeforeTarget{
+			target: target,
+			order:  targetOrder{ref: target.Ref, index: targetConfig.Config.Index},
+		})
 	}
 	sort.Slice(beforeTargets, func(i, j int) bool {
-		return compareBeforeTargets(beforeTargets[i], beforeTargets[j])
+		return compareTargetOrder(beforeTargets[i].order, beforeTargets[j].order)
 	})
 	for _, before := range beforeTargets {
 		resolved.BeforeTargets = append(resolved.BeforeTargets, before.target)
 	}
 
+	resolvedTargets := make([]resolvedTarget, 0, len(blueprint.Targets))
 	for _, bpTarget := range blueprint.Targets {
 		target, err := repo.ResolveTarget(bpTarget.Ref)
 		if err != nil {
@@ -197,16 +212,17 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 				reload = *bpTarget.Reload
 			}
 		}
-		resolved.Targets = append(resolved.Targets, Target{
-			Ref:         target.ID(),
-			ConfigPath:  bundleConfigPath(bundle),
-			Command:     target.Cmd,
-			WorkingDir:  ResolveWorkingDir(repo.RepoRoot(), target),
-			Env:         ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
-			ExplicitEnv: env,
-			OverrideEnv: envVars(bpTarget.Env),
-			DotenvEnv:   dotenvEnv,
-			Reload:      reload,
+		targetSpec := Target{
+			Ref:          target.ID(),
+			ConfigPath:   bundleConfigPath(bundle),
+			Command:      target.Cmd,
+			WorkingDir:   ResolveWorkingDir(repo.RepoRoot(), target),
+			ReadinessCmd: target.Config.ReadinessCmd,
+			Env:          ResolveTargetEnv(repo, bundle, target, blueprint, bpTarget),
+			ExplicitEnv:  env,
+			OverrideEnv:  envVars(bpTarget.Env),
+			DotenvEnv:    dotenvEnv,
+			Reload:       reload,
 			Watch: Watch{
 				Roots:   ResolveWatchRoots(repo.RepoRoot(), bundle, target),
 				Ignore:  sortedStrings(target.Config.Ignore),
@@ -217,7 +233,17 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 				Enabled: target.Config.Dotenv.Enabled,
 				Files:   ResolveDotenvFiles(repo.RepoRoot(), bundle, target),
 			},
+		}
+		resolvedTargets = append(resolvedTargets, resolvedTarget{
+			target: targetSpec,
+			order:  targetOrder{ref: targetSpec.Ref, index: target.Config.Index},
 		})
+	}
+	sort.Slice(resolvedTargets, func(i, j int) bool {
+		return compareTargetOrder(resolvedTargets[i].order, resolvedTargets[j].order)
+	})
+	for _, target := range resolvedTargets {
+		resolved.Targets = append(resolved.Targets, target.target)
 	}
 
 	depTargets, err := resolveDepTargets(repo, blueprint, targetSeen, beforeSeen, addBundle)
@@ -228,9 +254,6 @@ func Resolve(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) (*
 
 	sort.Slice(resolved.Bundles, func(i, j int) bool {
 		return resolved.Bundles[i].Name < resolved.Bundles[j].Name
-	})
-	sort.Slice(resolved.Targets, func(i, j int) bool {
-		return resolved.Targets[i].Ref < resolved.Targets[j].Ref
 	})
 	sort.Slice(resolved.Dependencies, func(i, j int) bool {
 		return resolved.Dependencies[i].Ref < resolved.Dependencies[j].Ref
@@ -331,20 +354,19 @@ func longRunningTarget(name string) bool {
 	return strings.HasSuffix(name, "_dev") || strings.HasSuffix(name, "_serve")
 }
 
-func compareBeforeTargets(left, right resolvedBeforeTarget) bool {
-	if left.index != nil && right.index != nil {
-		if *left.index != *right.index {
-			return *left.index < *right.index
-		}
-		return left.target.Ref < right.target.Ref
-	}
+func compareTargetOrder(left, right targetOrder) bool {
+	leftIndex := 0
 	if left.index != nil {
-		return true
+		leftIndex = *left.index
 	}
+	rightIndex := 0
 	if right.index != nil {
-		return false
+		rightIndex = *right.index
 	}
-	return left.target.Ref < right.target.Ref
+	if leftIndex != rightIndex {
+		return leftIndex < rightIndex
+	}
+	return left.ref < right.ref
 }
 
 func ResolveRepoEnv(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) []EnvVar {

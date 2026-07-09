@@ -15,11 +15,12 @@ type TargetConfig struct {
 }
 
 type TargetOptions struct {
-	WorkingDir string       `koanf:"working_dir"`
-	Dotenv     DotenvConfig `koanf:"dotenv"`
-	Reload     *bool        `koanf:"reload"`
-	Ignore     []string     `koanf:"ignore"`
-	Index      *int         `koanf:"index"`
+	WorkingDir   string       `koanf:"working_dir"`
+	Dotenv       DotenvConfig `koanf:"dotenv"`
+	Reload       *bool        `koanf:"reload"`
+	Ignore       []string     `koanf:"ignore"`
+	Index        *int         `koanf:"index"`
+	ReadinessCmd string       `koanf:"readiness-cmd"`
 }
 
 type DotenvConfig struct {
