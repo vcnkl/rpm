@@ -132,6 +132,13 @@ func (m dashboardModel) renderBody(width, height int) string {
 		log := m.renderLog(width, logH, false)
 		return lipgloss.JoinVertical(lipgloss.Left, roster, log)
 	}
+	leftW, rightW := bodyWidths(width)
+	roster := m.renderRoster(leftW, height)
+	log := m.renderLog(rightW, height, false)
+	return lipgloss.JoinHorizontal(lipgloss.Top, roster, log)
+}
+
+func bodyWidths(width int) (int, int) {
 	leftW := int(float64(width) * 0.44)
 	if leftW < leftPanelMin {
 		leftW = leftPanelMin
@@ -139,10 +146,7 @@ func (m dashboardModel) renderBody(width, height int) string {
 	if leftW > width-leftPanelMin {
 		leftW = width - leftPanelMin
 	}
-	rightW := width - leftW
-	roster := m.renderRoster(leftW, height)
-	log := m.renderLog(rightW, height, false)
-	return lipgloss.JoinHorizontal(lipgloss.Top, roster, log)
+	return leftW, width - leftW
 }
 
 func (m dashboardModel) renderRoster(totalW, totalH int) string {
@@ -301,22 +305,25 @@ func (m dashboardModel) rosterMetricsBlock(unit unitState, index int) string {
 }
 
 func (m dashboardModel) renderLog(totalW, totalH int, focused bool) string {
-	interior := totalW - 4
-	if interior < 10 {
-		interior = 10
-	}
+	interior := logInterior(totalW)
 	interiorH := totalH - 2
 	if interiorH < 1 {
 		interiorH = 1
 	}
 	unit, ok := m.selectedUnit()
-	title := m.logTitle(unit, ok, interior, focused)
+	var rows []string
+	totalRows := len(unit.Output)
+	if m.wrapLogs {
+		rows = m.logRows(unit, ok, interior)
+		totalRows = len(rows)
+	}
+	title := m.logTitle(unit, ok, interior, focused, totalRows)
 	logHeight := interiorH - 1
 	if logHeight < 1 {
 		logHeight = 1
 	}
 
-	lines := m.logWindow(unit, ok, logHeight, interior)
+	lines := m.logWindow(unit, ok, rows, logHeight, interior)
 	inner := lipgloss.JoinVertical(lipgloss.Left, append([]string{title}, lines...)...)
 	style := m.theme.panel
 	if focused {
@@ -326,7 +333,23 @@ func (m dashboardModel) renderLog(totalW, totalH int, focused bool) string {
 	return m.zones.Mark(zoneLog, panel)
 }
 
-func (m dashboardModel) logTitle(unit unitState, ok bool, interior int, focused bool) string {
+func logInterior(totalW int) int {
+	interior := totalW - 4
+	if interior < 10 {
+		interior = 10
+	}
+	return interior
+}
+
+func (m dashboardModel) logInteriorWidth() int {
+	totalW := m.width
+	if !m.focusMode && totalW >= stackWidth {
+		_, totalW = bodyWidths(totalW)
+	}
+	return logInterior(totalW)
+}
+
+func (m dashboardModel) logTitle(unit unitState, ok bool, interior int, focused bool, totalRows int) string {
 	name := m.theme.panelTitle.Render("LOGS")
 	if focused {
 		name = m.theme.panelTitle.Render("LOGS · FOCUS")
@@ -336,7 +359,7 @@ func (m dashboardModel) logTitle(unit unitState, ok bool, interior int, focused 
 	}
 	badge := m.theme.r.NewStyle().Foreground(statusColor(unit.Status)).Bold(true).
 		Render(" " + unit.Ref + " · " + string(unit.Status))
-	follow := m.followBadge(unit)
+	follow := m.followBadge(totalRows)
 	head := name + badge
 	gap := interior - lipgloss.Width(head) - lipgloss.Width(follow)
 	if gap < 1 {
@@ -345,19 +368,40 @@ func (m dashboardModel) logTitle(unit unitState, ok bool, interior int, focused 
 	return head + strings.Repeat(" ", gap) + follow
 }
 
-func (m dashboardModel) followBadge(unit unitState) string {
-	if m.logScroll == 0 {
+func (m dashboardModel) followBadge(totalRows int) string {
+	if m.autoScroll && m.logScroll == 0 {
 		return m.theme.r.NewStyle().Foreground(colRunning).Bold(true).Render("LIVE")
 	}
-	shown := len(unit.Output) - m.logScroll
+	shown := totalRows - m.logScroll
 	if shown < 0 {
 		shown = 0
 	}
+	if shown > totalRows {
+		shown = totalRows
+	}
 	return m.theme.r.NewStyle().Foreground(colReload).Bold(true).
-		Render(fmt.Sprintf("PAUSED %d/%d", shown, len(unit.Output)))
+		Render(fmt.Sprintf("PAUSED %d/%d", shown, totalRows))
 }
 
-func (m dashboardModel) logWindow(unit unitState, ok bool, height, interior int) []string {
+func (m dashboardModel) logRows(unit unitState, ok bool, interior int) []string {
+	if !ok {
+		return nil
+	}
+	rows := make([]string, 0, len(unit.Output))
+	for _, line := range unit.Output {
+		rows = append(rows, m.logLineRows(line, interior)...)
+	}
+	return rows
+}
+
+func (m dashboardModel) logLineRows(line string, interior int) []string {
+	if !m.wrapLogs {
+		return []string{m.theme.logLine.Render(truncate(line, interior))}
+	}
+	return strings.Split(m.theme.logLine.Width(interior).Render(line), "\n")
+}
+
+func (m dashboardModel) logWindow(unit unitState, ok bool, rows []string, height, interior int) []string {
 	lines := make([]string, 0, height)
 	if !ok || len(unit.Output) == 0 {
 		hint := "no output yet"
@@ -370,9 +414,25 @@ func (m dashboardModel) logWindow(unit unitState, ok bool, height, interior int)
 		}
 		return lines
 	}
-	end := len(unit.Output) - m.logScroll
-	if end > len(unit.Output) {
-		end = len(unit.Output)
+	if m.wrapLogs {
+		start, end := logWindowRange(len(rows), m.logScroll, height)
+		lines = append(lines, rows[start:end]...)
+	} else {
+		start, end := logWindowRange(len(unit.Output), m.logScroll, height)
+		for _, line := range unit.Output[start:end] {
+			lines = append(lines, m.theme.logLine.Render(truncate(line, interior)))
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, m.theme.r.NewStyle().Width(interior).Render(""))
+	}
+	return lines
+}
+
+func logWindowRange(total, scroll, height int) (int, int) {
+	end := total - scroll
+	if end > total {
+		end = total
 	}
 	if end < 1 {
 		end = 1
@@ -381,13 +441,7 @@ func (m dashboardModel) logWindow(unit unitState, ok bool, height, interior int)
 	if start < 0 {
 		start = 0
 	}
-	for _, line := range unit.Output[start:end] {
-		lines = append(lines, m.theme.logLine.Render(truncate(line, interior)))
-	}
-	for len(lines) < height {
-		lines = append(lines, m.theme.r.NewStyle().Width(interior).Render(""))
-	}
-	return lines
+	return start, end
 }
 
 func (m dashboardModel) renderFooter(width int) string {

@@ -12,6 +12,8 @@ var dashboardHints = []keyHint{
 	{"d", "deps"},
 	{"f", "focus"},
 	{"/", "filter"},
+	{"W", "wrap"},
+	{"S", "auto-scroll"},
 	{"?", "keys"},
 	{"q", "quit"},
 }

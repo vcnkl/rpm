@@ -38,8 +38,10 @@ type dashboardModel struct {
 	filter    string
 	showHelp  bool
 
-	logScroll int
-	selected  string
+	logScroll  int
+	autoScroll bool
+	wrapLogs   bool
+	selected   string
 
 	stopping bool
 	finished bool
@@ -67,6 +69,7 @@ func newDashboardModel(t *theme, mgr *zone.Manager, controller Controller, bluep
 		state:         newEnvState(blueprint),
 		width:         100,
 		height:        30,
+		autoScroll:    true,
 		animate:       animate,
 		spring:        harmonica.NewSpring(harmonica.FPS(animationFPS), 6.0, 0.85),
 		targetMetrics: make(map[string]metrics.Sample),
@@ -81,15 +84,32 @@ func (m dashboardModel) Init() tea.Cmd {
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if m.width != msg.Width {
+			m.logScroll = 0
+		}
 		m.width = msg.Width
 		m.height = msg.Height
 		next, cmd := m.scheduleTick()
 		return next, cmd
 	case eventMsg:
+		before, beforeOK := m.selectedUnit()
 		m.state = applyEvent(m.state, msg.event)
 		m.reconcileSelection()
-		if m.isSelectedRef(msg.event.Ref) {
+		after, afterOK := m.selectedUnit()
+		if !beforeOK || !afterOK || before.Ref != after.Ref {
 			m.logScroll = 0
+		} else if after.OutputCount > before.OutputCount {
+			if m.autoScroll {
+				m.logScroll = 0
+			} else {
+				added := after.OutputCount - before.OutputCount
+				if added > len(after.Output) {
+					added = len(after.Output)
+				}
+				for _, line := range after.Output[len(after.Output)-added:] {
+					m.logScroll += len(m.logLineRows(line, m.logInteriorWidth()))
+				}
+			}
 		}
 		next, cmd := m.scheduleTick()
 		return next, cmd
@@ -199,6 +219,16 @@ func (m dashboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.logScroll = 0
 		}
 		return m, nil
+	case matchKey(key, "W"):
+		m.wrapLogs = !m.wrapLogs
+		m.logScroll = 0
+		return m, nil
+	case matchKey(key, "S"):
+		m.autoScroll = !m.autoScroll
+		if m.autoScroll {
+			m.logScroll = 0
+		}
+		return m, nil
 	case matchKey(key, "r"):
 		return m, m.restartSelected()
 	case matchKey(key, "R"):
@@ -209,6 +239,7 @@ func (m dashboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case matchKey(key, "f"):
 		m.focusMode = !m.focusMode
+		m.logScroll = 0
 		return m, nil
 	case matchKey(key, "/"):
 		m.filtering = true
@@ -324,6 +355,7 @@ func (m dashboardModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case m.zones.Get(m.zonePrefix + zoneFocus).InBounds(msg):
 		m.focusMode = !m.focusMode
+		m.logScroll = 0
 		return m, nil
 	case m.zones.Get(m.zonePrefix + zoneFilter).InBounds(msg):
 		m.filtering = !m.filtering
@@ -418,17 +450,6 @@ func (m dashboardModel) selectedUnit() (unitState, bool) {
 		return unitState{}, false
 	}
 	return visible[m.selectedIndex(visible)], true
-}
-
-func (m dashboardModel) isSelectedRef(ref string) bool {
-	if ref == "" {
-		return false
-	}
-	unit, ok := m.selectedUnit()
-	if !ok {
-		return false
-	}
-	return ref == unit.Ref
 }
 
 func absf(v float64) float64 {

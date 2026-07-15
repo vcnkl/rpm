@@ -49,12 +49,13 @@ var kindOrder = map[unitKind]int{
 }
 
 type unitState struct {
-	Ref    string
-	Bundle string
-	Name   string
-	Kind   unitKind
-	Status unitStatus
-	Output []string
+	Ref         string
+	Bundle      string
+	Name        string
+	Kind        unitKind
+	Status      unitStatus
+	Output      []string
+	OutputCount int
 }
 
 type envState struct {
@@ -189,6 +190,7 @@ func appendOutput(state envState, ref string, line string) envState {
 			output = output[len(output)-maxOutputLines:]
 		}
 		units[i].Output = output
+		units[i].OutputCount++
 		break
 	}
 	state.units = units
