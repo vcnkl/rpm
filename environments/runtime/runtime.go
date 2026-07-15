@@ -659,7 +659,7 @@ type ShellProcessRunner struct {
 	err   io.Writer
 }
 
-const shellProcessWaitDelay = 2 * time.Second
+const shellProcessStopTimeout = 2 * time.Second
 
 func NewShellProcessRunner(shell string, out io.Writer, err io.Writer) *ShellProcessRunner {
 	return &ShellProcessRunner{shell: shell, out: out, err: err}
@@ -682,7 +682,6 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 	stderr := &lineEventWriter{sink: sink, ref: target.Ref, stream: "stderr"}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.WaitDelay = shellProcessWaitDelay
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -722,7 +721,7 @@ func (p *shellProcess) Stop(ctx context.Context) error {
 	select {
 	case <-p.waitDone:
 		return nil
-	case <-time.After(shellProcessWaitDelay):
+	case <-time.After(shellProcessStopTimeout):
 		_ = p.cmd.Process.Kill()
 	case <-ctx.Done():
 		_ = p.cmd.Process.Kill()
