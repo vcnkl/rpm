@@ -68,8 +68,8 @@ func (m pickerModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+func (m pickerModel) Update(in tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := in.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height

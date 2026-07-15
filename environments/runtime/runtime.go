@@ -659,7 +659,7 @@ type ShellProcessRunner struct {
 	err   io.Writer
 }
 
-const shellProcessStopTimeout = 2 * time.Second
+const shellProcessStopTimeout = 10 * time.Second
 
 func NewShellProcessRunner(shell string, out io.Writer, err io.Writer) *ShellProcessRunner {
 	return &ShellProcessRunner{shell: shell, out: out, err: err}

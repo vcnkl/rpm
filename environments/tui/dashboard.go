@@ -81,8 +81,8 @@ func (m dashboardModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+func (m dashboardModel) Update(in tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := in.(type) {
 	case tea.WindowSizeMsg:
 		if m.width != msg.Width {
 			m.logScroll = 0
