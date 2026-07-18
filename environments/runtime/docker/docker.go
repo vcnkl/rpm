@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -11,12 +12,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/containerd/errdefs"
 	sdkclient "github.com/docker/go-sdk/client"
 	sdkcontainer "github.com/docker/go-sdk/container"
 	sdknetwork "github.com/docker/go-sdk/network"
 	sdkvolume "github.com/docker/go-sdk/volume"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	mobynetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -29,6 +33,7 @@ type Backend interface {
 	EnsureNetwork(ctx context.Context, name string) (bool, error)
 	EnsureVolume(ctx context.Context, name string) (bool, error)
 	EnsureContainer(ctx context.Context, spec ContainerSpec) (ContainerState, error)
+	FollowContainerLogs(ctx context.Context, name string, since time.Time, stdout io.Writer, stderr io.Writer) error
 	RemoveContainer(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
 	RemoveVolume(ctx context.Context, name string) error
@@ -47,6 +52,7 @@ type Options struct {
 	PortAllocator   PortAllocator
 	VolumeNamer     VolumeNamer
 	ReadinessRunner ReadinessRunner
+	EventSink       envruntime.EventSink
 	Shell           string
 }
 
@@ -72,7 +78,11 @@ type CLI struct {
 	portAllocator   PortAllocator
 	volumeNamer     VolumeNamer
 	readinessRunner ReadinessRunner
+	eventSink       envruntime.EventSink
 	shell           string
+	followerCancels []context.CancelFunc
+	followerMu      sync.Mutex
+	followerWG      sync.WaitGroup
 }
 
 func NewCLI(opts Options) *CLI {
@@ -96,7 +106,14 @@ func NewCLI(opts Options) *CLI {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	return &CLI{backend: backend, portAllocator: portAllocator, volumeNamer: volumeNamer, readinessRunner: readinessRunner, shell: shell}
+	return &CLI{
+		backend:         backend,
+		portAllocator:   portAllocator,
+		volumeNamer:     volumeNamer,
+		readinessRunner: readinessRunner,
+		eventSink:       opts.EventSink,
+		shell:           shell,
+	}
 }
 
 func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) (envruntime.DependencyStartup, error) {
@@ -113,6 +130,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 	startedContainers := []string{}
 	createdVolumes := []string{}
 	fail := func(ref string, cause error) (envruntime.DependencyStartup, error) {
+		c.stopLogFollowers()
 		depErr := envruntime.NewDependencyError(ref, cause)
 		if cleanupErr := c.cleanup(context.WithoutCancel(ctx), network, createdNetwork, startedContainers, createdVolumes); cleanupErr != nil {
 			return envruntime.DependencyStartup{}, errors.Wrapf(depErr, "%v", cleanupErr)
@@ -134,6 +152,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			}
 		}
 		for _, name := range containerNames(blueprint, dep) {
+			logSince := time.Now().UTC()
 			spec, mappings, err := c.containerSpec(ctx, network, name, dep, volumeBinds)
 			if err != nil {
 				return fail(dep.Ref, err)
@@ -145,6 +164,7 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 			if state.Created {
 				startedContainers = append(startedContainers, name)
 			}
+			c.startLogFollower(ctx, name, dep.Ref, logSince)
 			env, err := dependencyPortEnv(name, dep, mappings, state)
 			if err != nil {
 				return fail(dep.Ref, err)
@@ -158,6 +178,44 @@ func (c *CLI) Up(ctx context.Context, blueprint string, plan *envstarlark.Runtim
 		}
 	}
 	return startup, nil
+}
+
+func (c *CLI) startLogFollower(ctx context.Context, name string, ref string, since time.Time) {
+	if c.eventSink == nil {
+		return
+	}
+	followCtx, cancel := context.WithCancel(ctx)
+	c.followerMu.Lock()
+	c.followerCancels = append(c.followerCancels, cancel)
+	c.followerWG.Add(1)
+	c.followerMu.Unlock()
+	go func() {
+		defer c.followerWG.Done()
+		stdout := envruntime.NewEventWriter(c.eventSink, ref, "stdout")
+		stderr := envruntime.NewEventWriter(c.eventSink, ref, "stderr")
+		err := c.backend.FollowContainerLogs(followCtx, name, since, stdout, stderr)
+		_ = stdout.Close()
+		_ = stderr.Close()
+		if err != nil && (followCtx.Err() == nil || !errors.Is(err, followCtx.Err())) {
+			c.eventSink.Emit(envruntime.Event{
+				Type:   envruntime.EventProcessOutput,
+				Ref:    ref,
+				Stream: "stderr",
+				Line:   "dependency log stream failed: " + err.Error(),
+			})
+		}
+	}()
+}
+
+func (c *CLI) stopLogFollowers() {
+	c.followerMu.Lock()
+	cancels := c.followerCancels
+	c.followerCancels = nil
+	for _, cancel := range cancels {
+		cancel()
+	}
+	c.followerMu.Unlock()
+	c.followerWG.Wait()
 }
 
 func normalizeDependencies(blueprint string, dependencies []envstarlark.Dependency) ([]envstarlark.Dependency, error) {
@@ -334,6 +392,7 @@ func readinessEnv(values map[string]string) []string {
 }
 
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {
+	c.stopLogFollowers()
 	for _, dep := range plan.Dependencies {
 		for _, name := range containerNames(blueprint, dep) {
 			if err := c.backend.RemoveContainer(ctx, name); err != nil && !isMissingDockerResource(err) {
@@ -456,6 +515,38 @@ func (b sdkBackend) EnsureContainer(ctx context.Context, spec ContainerSpec) (Co
 		return ContainerState{}, errors.Wrapf(err, "run docker container %s", spec.Name)
 	}
 	return ContainerState{Created: true}, nil
+}
+
+func (b sdkBackend) FollowContainerLogs(ctx context.Context, name string, since time.Time, stdout io.Writer, stderr io.Writer) error {
+	cli, err := b.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cli.Close() }()
+	found, err := cli.FindContainerByName(ctx, name)
+	if err != nil {
+		return errors.Wrapf(err, "find docker container %s logs", name)
+	}
+	inspect, err := cli.ContainerInspect(ctx, found.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		return errors.Wrapf(err, "inspect docker container %s logs", name)
+	}
+	stream, err := cli.ContainerLogs(ctx, found.ID, client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Since:      since.Format(time.RFC3339Nano),
+		Follow:     true,
+	})
+	if err != nil {
+		return errors.Wrapf(err, "follow docker container %s logs", name)
+	}
+	defer func() { _ = stream.Close() }()
+	if inspect.Container.Config != nil && inspect.Container.Config.Tty {
+		_, err = io.Copy(stdout, stream)
+		return err
+	}
+	_, err = stdcopy.StdCopy(stdout, stderr, stream)
+	return err
 }
 
 // reuseExistingContainer reuses a found dependency container, reporting the

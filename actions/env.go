@@ -65,7 +65,7 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 	runner := envruntime.NewRunner(envruntime.Options{
 		ProcessRunner:    processRunner,
 		ReadinessRunner:  shellRunner,
-		DependencyRunner: a.dockerCLI(),
+		DependencyRunner: a.dockerCLI(sink),
 		ReloadWatcher:    envruntime.NewWatcherFactory(),
 		EventSink:        sink,
 		ControlActions:   controlActions,
@@ -124,7 +124,7 @@ func (a *EnvAction) Down(ctx context.Context, opts EnvDownOptions) error {
 	}
 
 	runner := envruntime.NewRunner(envruntime.Options{
-		DependencyRunner: a.dockerCLI(),
+		DependencyRunner: a.dockerCLI(nil),
 		EventSink:        envruntime.NewLineEventSink(a.out, a.err),
 	})
 	return runner.Down(ctx, plan)
@@ -138,9 +138,10 @@ func (a *EnvAction) Prune(_ context.Context, opts EnvPruneOptions) error {
 	return runtimedocker.PruneVolumeCache(a.volumeCachePath(), opts.Blueprint)
 }
 
-func (a *EnvAction) dockerCLI() *runtimedocker.CLI {
+func (a *EnvAction) dockerCLI(sink envruntime.EventSink) *runtimedocker.CLI {
 	return runtimedocker.NewCLI(runtimedocker.Options{
 		VolumeNamer: runtimedocker.NewFileVolumeNamer(a.volumeCachePath(), a.config.Repo().Project.Name),
+		EventSink:   sink,
 		Shell:       a.config.Repo().Shell,
 	})
 }

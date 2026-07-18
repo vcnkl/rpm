@@ -792,12 +792,24 @@ type lineEventWriter struct {
 	pending []byte
 }
 
+func NewEventWriter(sink EventSink, ref string, stream string) io.WriteCloser {
+	if sink == nil {
+		sink = discardSink{}
+	}
+	return &lineEventWriter{sink: sink, ref: ref, stream: stream}
+}
+
 func (w *lineEventWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pending = append(w.pending, data...)
 	w.emitLines(false)
 	return len(data), nil
+}
+
+func (w *lineEventWriter) Close() error {
+	w.flush()
+	return nil
 }
 
 func (w *lineEventWriter) flush() {

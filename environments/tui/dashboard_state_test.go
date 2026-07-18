@@ -64,6 +64,9 @@ func TestApplyEventKeepsDeclaredKind(t *testing.T) {
 	if unit.Kind != kindDependency {
 		t.Fatalf("kind should remain dependency, got %s", unit.Kind)
 	}
+	if unit.Status != statusPending {
+		t.Fatalf("status should remain pending, got %s", unit.Status)
+	}
 }
 
 func TestAppendOutputRingCap(t *testing.T) {

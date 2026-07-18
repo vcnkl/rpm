@@ -88,7 +88,7 @@ func applyEvent(state envState, event envruntime.Event) envState {
 	case envruntime.EventProcessStarted:
 		next = upsertUnit(state, event.Ref, kindTarget, statusRunning, event)
 	case envruntime.EventProcessOutput:
-		next = appendOutput(upsertUnit(state, event.Ref, kindTarget, statusRunning, event), event.Ref, event.Line)
+		next = appendOutput(upsertUnit(state, event.Ref, kindTarget, outputStatus(state, event.Ref), event), event.Ref, event.Line)
 	case envruntime.EventProcessExited:
 		status := statusExited
 		if event.Error != "" {
@@ -131,6 +131,15 @@ func applyEvent(state envState, event envruntime.Event) envState {
 		return state
 	}
 	return clampSelection(next)
+}
+
+func outputStatus(state envState, ref string) unitStatus {
+	for _, unit := range state.units {
+		if unit.Ref == ref {
+			return unit.Status
+		}
+	}
+	return statusRunning
 }
 
 func upsertUnit(state envState, ref string, kind unitKind, status unitStatus, event envruntime.Event) envState {

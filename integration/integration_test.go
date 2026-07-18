@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1557,6 +1558,10 @@ func (b *recordingBackend) EnsureContainer(_ context.Context, spec docker.Contai
 	b.calls = append(b.calls, "run "+spec.Name)
 	b.containers = append(b.containers, spec)
 	return docker.ContainerState{Created: true}, nil
+}
+
+func (b *recordingBackend) FollowContainerLogs(context.Context, string, time.Time, io.Writer, io.Writer) error {
+	return nil
 }
 
 // reusedPorts reports the host ports the fake existing container is bound to:
