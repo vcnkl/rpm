@@ -27,15 +27,24 @@ func TestCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
-			debug := ctx.Bool("debug")
 			affected := ctx.Bool("affected")
+			validator := newCmdValidator(ctx).loadConfig().resolveGraph()
+			if !affected && ctx.Args().Len() > 0 {
+				validator = validator.resolveTargetRefs("_test")
+			}
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
+			}
+
+			debug := ctx.Bool("debug")
 			parallel := ctx.Int("jobs")
 
 			level := logger.InfoLevel
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Test.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
@@ -45,16 +54,7 @@ func TestCmd() *cli.Command {
 			}
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
 
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
+			graph := validator.graph
 
 			suffix := "_test"
 			var targetIDs []string
@@ -72,7 +72,7 @@ func TestCmd() *cli.Command {
 					}
 				}
 			} else if ctx.Args().Len() > 0 {
-				targetIDs = selector.ResolveTargetRefs(ctx.Args().Slice(), suffix)
+				targetIDs = validator.targetIds
 			} else {
 				targets := selector.SelectBySuffix(suffix)
 				for _, t := range targets {

@@ -23,6 +23,15 @@ func DevCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
+			validator := newCmdValidator(ctx).loadConfig().resolveGraph()
+			if ctx.Args().Len() > 0 {
+				validator = validator.resolveTargetRefs("_dev", "_serve")
+			}
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
+			}
+
 			debug := ctx.Bool("debug")
 			dryRun := ctx.Bool("dry-run")
 
@@ -30,7 +39,7 @@ func DevCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Dev.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
@@ -40,16 +49,7 @@ func DevCmd() *cli.Command {
 			}
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
 
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
+			graph := validator.graph
 
 			selector := dag.NewSelector(graph, cfg.RepoRoot())
 			suffixes := []string{"_dev", "_serve"}
@@ -57,24 +57,7 @@ func DevCmd() *cli.Command {
 			seen := make(map[string]bool)
 
 			if ctx.Args().Len() > 0 {
-				for _, ref := range ctx.Args().Slice() {
-					matched := false
-					for _, suffix := range suffixes {
-						for _, id := range selector.ResolveTargetRefs([]string{ref}, suffix) {
-							if _, ok := graph.Nodes[id]; !ok {
-								continue
-							}
-							matched = true
-							if !seen[id] {
-								seen[id] = true
-								targetIDs = append(targetIDs, id)
-							}
-						}
-					}
-					if !matched {
-						return cli.Exit("error: target not found: "+ref, 1)
-					}
-				}
+				targetIDs = validator.targetIds
 			} else {
 				for _, suffix := range suffixes {
 					for _, n := range selector.SelectBySuffix(suffix) {

@@ -191,6 +191,116 @@ func TestEnvUpFailsWhenGeneratedStarlarkMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "rpm env render local-stack")
 }
 
+func TestEnvironmentCommandsRequireBlueprint(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	configPath := filepath.Join(repo.RepoRoot(), "repo.yml")
+	tests := []string{"edit", "validate", "render", "up", "down", "prune"}
+	defer captureCliExit(t)()
+
+	for _, command := range tests {
+		t.Run(command, func(t *testing.T) {
+			app := cmd.NewApp()
+			err := app.Run([]string{"rpm", "--config", configPath, "env", command})
+
+			require.Error(t, err)
+			assert.Equal(t, "blueprint argument required", strings.TrimPrefix(err.Error(), "error: "))
+		})
+	}
+}
+
+func TestEnvironmentCommandsLoadBlueprintDuringValidation(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	configPath := filepath.Join(repo.RepoRoot(), "repo.yml")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "edit", args: []string{"edit", "missing", "--non-interactive", "--reload"}},
+		{name: "validate", args: []string{"validate", "missing"}},
+		{name: "render", args: []string{"render", "missing"}},
+	}
+	defer captureCliExit(t)()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := cmd.NewApp()
+			out := new(bytes.Buffer)
+			errOut := new(bytes.Buffer)
+			app.Writer = out
+			app.ErrWriter = errOut
+			args := append([]string{"rpm", "--config", configPath, "env"}, tt.args...)
+
+			err := app.Run(args)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown blueprint file")
+			assert.Empty(t, out.String())
+			assert.Empty(t, errOut.String())
+		})
+	}
+}
+
+func TestEnvDownValidatesGeneratedEnvironmentBeforeAction(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	errOut := new(bytes.Buffer)
+	app.Writer = out
+	app.ErrWriter = errOut
+	defer captureCliExit(t)()
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "down", "local-stack"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generated Starlark not found")
+	assert.Empty(t, out.String())
+	assert.Empty(t, errOut.String())
+}
+
+func TestEnvPruneDoesNotRequireGeneratedEnvironment(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "prune", "local-stack"})
+
+	require.NoError(t, err)
+}
+
+func TestEnvCreateCollectsValidationErrorsWithoutOutput(t *testing.T) {
+	app := cmd.NewApp()
+	out := new(bytes.Buffer)
+	errOut := new(bytes.Buffer)
+	app.Writer = out
+	app.ErrWriter = errOut
+	defer captureCliExit(t)()
+	missingConfig := filepath.Join(t.TempDir(), "missing.yml")
+
+	err := app.Run([]string{"rpm", "--config", missingConfig, "env", "create", "--non-interactive", "--target-reload", "go-app:echo-123=maybe", "local-stack"})
+
+	require.Error(t, err)
+	configError := strings.Index(err.Error(), "failed to read repo.yml")
+	assignmentError := strings.Index(err.Error(), "invalid boolean value")
+	assert.GreaterOrEqual(t, configError, 0)
+	assert.Greater(t, assignmentError, configError)
+	assert.Empty(t, out.String())
+	assert.Empty(t, errOut.String())
+}
+
+func TestEnvCreateCollectsMalformedFlagAndBooleanAssignments(t *testing.T) {
+	repo := newCommandTestRepo(t)
+	app := cmd.NewApp()
+	defer captureCliExit(t)()
+
+	err := app.Run([]string{"rpm", "--config", filepath.Join(repo.RepoRoot(), "repo.yml"), "env", "create", "local-stack", "--target-reload", "missing-assignment", "--target-reload", "go-app:echo-123=maybe", "--target"})
+
+	require.Error(t, err)
+	assert.Equal(t, strings.Join([]string{
+		"error: --target requires a value",
+		`error: invalid boolean assignment "missing-assignment" (expected ref=true|false)`,
+		`error: invalid boolean value "maybe" for go-app:echo-123`,
+	}, "\n"), err.Error())
+}
+
 func newCommandTestRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 	repoRoot := t.TempDir()

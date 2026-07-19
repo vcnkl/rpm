@@ -2,7 +2,6 @@ package subcmds
 
 import (
 	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/logger"
 
 	"github.com/urfave/cli/v2"
@@ -20,6 +19,12 @@ func InitCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
+			validator := newCmdValidator(ctx).loadConfig().resolveGraph()
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
+			}
+
 			debug := ctx.Bool("debug")
 			force := ctx.Bool("force")
 
@@ -27,21 +32,10 @@ func InitCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
-
-			action := actions.NewInitAction(cfg, graph, log, force)
+			action := actions.NewInitAction(cfg, validator.graph, log, force)
 			result, err := action.Execute(ctx.Context)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)

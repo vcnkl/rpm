@@ -85,10 +85,6 @@ env:
         - "6379"
 ```
 
-Log output paths are relative to the repo root and cannot escape it. RPM creates no log directories while persistent logging is disabled. `--logs` enables persistent logging even when `logs.enabled` is false. `--logs=false` disables it when `logs.enabled` is true.
-
-Build, test and dev files use `<out>/<UTC epoch milliseconds>.txt`. Environment files use `<logs.env.out>/<environment>/<UTC epoch milliseconds>.txt`. Each file contains JSON events, one per line. Build, test and dev files receive the same structured records emitted to the terminal, including target output. Environment files receive the same source-decorated runtime events as the terminal or TUI. `source` is the event ref, the environment name for environment lifecycle events or `rpm` when neither is available.
-
 ## rpm.yml
 
 Bundle config options

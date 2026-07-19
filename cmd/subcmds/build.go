@@ -33,9 +33,18 @@ func BuildCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
+			affected := ctx.Bool("affected")
+			validator := newCmdValidator(ctx).loadConfig().resolveGraph()
+			if !affected && ctx.Args().Len() > 0 {
+				validator = validator.resolveTargetRefs("_build")
+			}
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
+			}
+
 			debug := ctx.Bool("debug")
 			force := ctx.Bool("force")
-			affected := ctx.Bool("affected")
 			dryRun := ctx.Bool("dry-run")
 			parallel := ctx.Int("jobs")
 
@@ -43,7 +52,7 @@ func BuildCmd() *cli.Command {
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Build.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
@@ -53,16 +62,7 @@ func BuildCmd() *cli.Command {
 			}
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
 
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
+			graph := validator.graph
 
 			store := builds.NewStore(cfg.BuildsPath())
 			if err := store.Load(); err != nil {
@@ -84,12 +84,7 @@ func BuildCmd() *cli.Command {
 					}
 				}
 			} else if ctx.Args().Len() > 0 {
-				targetIDs = selector.ResolveTargetRefs(ctx.Args().Slice(), "_build")
-				for _, id := range targetIDs {
-					if _, ok := graph.Nodes[id]; !ok {
-						return cli.Exit("error: target not found: "+id, 1)
-					}
-				}
+				targetIDs = validator.targetIds
 			} else {
 				targets := selector.SelectBySuffix("_build")
 				for _, t := range targets {

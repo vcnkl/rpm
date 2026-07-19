@@ -29,8 +29,21 @@ func GraphCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx *cli.Context) error {
+			validator := newCmdValidator(ctx).
+				useFirstArgument().
+				allowFormat("text", "json", "dot").
+				loadConfig().
+				resolveGraph()
+			if ctx.Args().Len() > 0 {
+				validator = validator.resolveTargetRefs()
+			}
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
+			}
+
 			debug := ctx.Bool("debug")
-			format := ctx.String("format")
+			format := validator.format
 			reverse := ctx.Bool("reverse")
 
 			level := logger.InfoLevel
@@ -38,24 +51,14 @@ func GraphCmd() *cli.Command {
 				level = logger.DebugLevel
 			}
 
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 			_ = log
-
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
+			graph := validator.graph
 
 			var targetID string
-			if ctx.Args().Len() > 0 {
-				targetID = ctx.Args().First()
+			if len(validator.targetIds) > 0 {
+				targetID = validator.targetIds[0]
 			}
 
 			switch format {

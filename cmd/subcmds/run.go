@@ -2,7 +2,6 @@ package subcmds
 
 import (
 	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/dag"
 	"github.com/vcnkl/rpm/logger"
 
 	"github.com/urfave/cli/v2"
@@ -14,32 +13,28 @@ func RunCmd() *cli.Command {
 		Usage:     "Run any arbitrary target by exact name",
 		ArgsUsage: "<target>",
 		Action: func(ctx *cli.Context) error {
-			if ctx.Args().Len() == 0 {
-				return cli.Exit("error: target argument required", 1)
+			validator := newCmdValidator(ctx).
+				useFirstArgument().
+				requireArgument("target").
+				loadConfig().
+				resolveGraph().
+				resolveTargetRefs()
+			validation := validator.validate()
+			if !validation.ok() {
+				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
 			}
 
 			debug := ctx.Bool("debug")
-			targetID := ctx.Args().First()
+			targetID := validator.targetIds[0]
 
 			level := logger.InfoLevel
 			if debug {
 				level = logger.DebugLevel
 			}
-			cfg := loadConfig(ctx)
+			cfg := validator.cfg
 			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
 
-			graph := dag.NewGraph()
-			for _, bundle := range cfg.Bundles() {
-				for _, target := range bundle.Targets {
-					graph.AddTarget(target)
-				}
-			}
-
-			if err := graph.Resolve(cfg.Bundles()); err != nil {
-				return cli.Exit("error: "+err.Error(), 1)
-			}
-
-			action := actions.NewRunAction(cfg, graph, log)
+			action := actions.NewRunAction(cfg, validator.graph, log)
 			result, err := action.Execute(ctx.Context, targetID)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
