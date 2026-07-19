@@ -65,6 +65,8 @@ func NewDevAction(cfg *config.Config, graph *dag.Graph, log logger.Logger) *DevA
 func (a *DevAction) Execute(ctx context.Context, targetIDs []string) (*models.Result, error) {
 	start := time.Now()
 	result := &models.Result{}
+	devCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	targetNodes := make([]*dag.Node, 0, len(targetIDs))
 	for _, id := range targetIDs {
@@ -75,7 +77,7 @@ func (a *DevAction) Execute(ctx context.Context, targetIDs []string) (*models.Re
 		targetNodes = append(targetNodes, node)
 	}
 
-	if err := a.runDependencies(ctx, targetIDs); err != nil {
+	if err := a.runDependencies(devCtx, targetIDs); err != nil {
 		return nil, err
 	}
 
@@ -88,7 +90,7 @@ func (a *DevAction) Execute(ctx context.Context, targetIDs []string) (*models.Re
 		wg.Add(1)
 		go func(n *dag.Node) {
 			defer wg.Done()
-			if err := a.runDevTarget(ctx, n, coordinator); err != nil {
+			if err := a.runDevTarget(devCtx, n, coordinator); err != nil {
 				errCh <- err
 			}
 		}(node)
@@ -102,9 +104,12 @@ func (a *DevAction) Execute(ctx context.Context, targetIDs []string) (*models.Re
 
 	select {
 	case <-ctx.Done():
-		wg.Wait()
+		cancel()
+		<-done
 	case err := <-errCh:
 		result.Failed = append(result.Failed, models.FailedTarget{Error: err})
+		cancel()
+		<-done
 	case <-done:
 	}
 
@@ -126,8 +131,8 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 			WorkDir: workDir,
 			Env:     env,
 			Shell:   a.config.Repo().Shell,
-			Stdout:  os.Stdout,
-			Stderr:  os.Stderr,
+			Stdout:  targetLog.Output(os.Stdout),
+			Stderr:  targetLog.Output(os.Stderr),
 		})
 	}
 
@@ -136,20 +141,35 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 	if err != nil {
 		return err
 	}
-	defer w.Stop()
-
 	var cmd *exec.Cmd
+	var cmdDone chan struct{}
 	var cmdMu sync.Mutex
+	var callbackWG sync.WaitGroup
+	var callbackMu sync.Mutex
+	stopping := false
+
+	stopCmd := func() {
+		if cmd == nil || cmd.Process == nil {
+			return
+		}
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		time.Sleep(100 * time.Millisecond)
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if cmdDone != nil {
+			<-cmdDone
+		}
+	}
 
 	startCmd := func() {
 		cmdMu.Lock()
 		defer cmdMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
 
-		if cmd != nil && cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-			time.Sleep(100 * time.Millisecond)
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			_ = cmd.Wait()
+		stopCmd()
+		if ctx.Err() != nil {
+			return
 		}
 
 		targetLog.Info("starting...")
@@ -158,8 +178,8 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 		cmd = exec.Command(shellParts[0], shellArgs...)
 		cmd.Dir = workDir
 		cmd.Env = env
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = targetLog.Output(os.Stdout)
+		cmd.Stderr = targetLog.Output(os.Stderr)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 		if startErr := cmd.Start(); startErr != nil {
@@ -167,13 +187,27 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 			return
 		}
 
-		go func() {
-			_ = cmd.Wait()
-		}()
+		cmdDone = make(chan struct{})
+		go func(running *exec.Cmd, done chan struct{}) {
+			_ = running.Wait()
+			close(done)
+		}(cmd, cmdDone)
 	}
 
 	w.OnChange(func(path string) {
+		callbackMu.Lock()
+		if stopping || ctx.Err() != nil {
+			callbackMu.Unlock()
+			return
+		}
+		callbackWG.Add(1)
+		callbackMu.Unlock()
+		defer callbackWG.Done()
+
 		status, buildErr := coordinator.Build(ctx, target.BundleName)
+		if ctx.Err() != nil {
+			return
+		}
 		if buildErr != nil {
 			targetLog.Error("build failed, not restarting", logger.Err(buildErr))
 			return
@@ -198,12 +232,14 @@ func (a *DevAction) runDevTarget(ctx context.Context, node *dag.Node, coordinato
 
 	<-ctx.Done()
 
+	callbackMu.Lock()
+	stopping = true
+	callbackMu.Unlock()
+	w.Stop()
+	callbackWG.Wait()
+
 	cmdMu.Lock()
-	if cmd != nil && cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		time.Sleep(100 * time.Millisecond)
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	stopCmd()
 	cmdMu.Unlock()
 
 	return nil

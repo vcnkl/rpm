@@ -9,6 +9,7 @@ type RepoConfig struct {
 	Init    []InitStep    `koanf:"init"`
 	Ignore  []string      `koanf:"ignore"`
 	Logger  LoggerConfig  `koanf:"logger"`
+	Logs    LogsConfig    `koanf:"logs"`
 }
 
 type ProjectConfig struct {
@@ -43,6 +44,18 @@ type LoggerDateTimeConfig struct {
 	Format string `koanf:"format"`
 }
 
+type LogsConfig struct {
+	Enabled bool            `koanf:"enabled"`
+	Build   LogOutputConfig `koanf:"build"`
+	Test    LogOutputConfig `koanf:"test"`
+	Dev     LogOutputConfig `koanf:"dev"`
+	Env     LogOutputConfig `koanf:"env"`
+}
+
+type LogOutputConfig struct {
+	Out string `koanf:"out"`
+}
+
 func (r *RepoConfig) SetDefaults() {
 	if r.Shell == "" {
 		r.Shell = "/bin/sh"
@@ -64,6 +77,18 @@ func (r *RepoConfig) SetDefaults() {
 	}
 	if r.Logger.DateTime.Format == "" {
 		r.Logger.DateTime.Format = time.RFC3339
+	}
+	if r.Logs.Build.Out == "" {
+		r.Logs.Build.Out = "log/rpm/build"
+	}
+	if r.Logs.Test.Out == "" {
+		r.Logs.Test.Out = "log/rpm/test"
+	}
+	if r.Logs.Dev.Out == "" {
+		r.Logs.Dev.Out = "log/rpm/dev"
+	}
+	if r.Logs.Env.Out == "" {
+		r.Logs.Env.Out = "log/rpm/env"
 	}
 }
 

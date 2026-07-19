@@ -125,6 +125,17 @@ func TestRepoConfig_SetDefaults(t *testing.T) {
 	}
 }
 
+func TestRepoConfig_LogDefaults(t *testing.T) {
+	cfg := RepoConfig{}
+	cfg.SetDefaults()
+
+	assert.False(t, cfg.Logs.Enabled)
+	assert.Equal(t, "log/rpm/build", cfg.Logs.Build.Out)
+	assert.Equal(t, "log/rpm/test", cfg.Logs.Test.Out)
+	assert.Equal(t, "log/rpm/dev", cfg.Logs.Dev.Out)
+	assert.Equal(t, "log/rpm/env", cfg.Logs.Env.Out)
+}
+
 func TestBundleConfig_SetDefaults(t *testing.T) {
 	tests := []struct {
 		name         string

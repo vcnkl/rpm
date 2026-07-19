@@ -31,6 +31,10 @@ func NewApp() *cli.App {
 				Value:   runtime.NumCPU(),
 				Usage:   "Max parallel jobs",
 			},
+			&cli.BoolFlag{
+				Name:  "logs",
+				Usage: "Write persistent JSON logs",
+			},
 		},
 		Commands: []*cli.Command{
 			subcmds.InitCmd(),

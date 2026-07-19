@@ -36,7 +36,14 @@ func TestCmd() *cli.Command {
 				level = logger.DebugLevel
 			}
 			cfg := loadConfig(ctx)
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
+			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Test.Out)
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			if logFile != nil {
+				defer closeLogFile(logFile)
+			}
+			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
 
 			graph := dag.NewGraph()
 			for _, bundle := range cfg.Bundles() {

@@ -283,12 +283,20 @@ func envUpCmd() *cli.Command {
 			noReload := ctx.Bool("no-reload") || trailingBools["no-reload"]
 			noDeps := ctx.Bool("no-deps") || trailingBools["no-deps"]
 			cfg := loadConfig(ctx)
+			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Env.Out, name)
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			if logFile != nil {
+				defer closeLogFile(logFile)
+			}
 			action := actions.NewEnvAction(cfg, ctx.App.Writer, ctx.App.ErrWriter)
 			if err := action.Up(ctx.Context, actions.EnvUpOptions{
 				Blueprint:      name,
 				NoReload:       noReload,
 				NoDeps:         noDeps,
 				NonInteractive: ctx.Bool("non-interactive") || trailingBools["non-interactive"],
+				LogDestination: logFile,
 			}); err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}

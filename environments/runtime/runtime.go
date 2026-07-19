@@ -81,6 +81,7 @@ type ControlAction struct {
 
 type Event struct {
 	Type    string `json:"type"`
+	Source  string `json:"source,omitempty"`
 	Ref     string `json:"ref,omitempty"`
 	Bundle  string `json:"bundle,omitempty"`
 	Name    string `json:"name,omitempty"`
@@ -768,6 +769,33 @@ func (s *LineEventSink) Emit(event Event) {
 		return
 	}
 	_, _ = fmt.Fprintln(w, string(data))
+}
+
+type SourceEventSink struct {
+	environment string
+	sinks       []EventSink
+	mu          sync.Mutex
+}
+
+func NewSourceEventSink(environment string, sinks ...EventSink) *SourceEventSink {
+	return &SourceEventSink{environment: environment, sinks: sinks}
+}
+
+func (s *SourceEventSink) Emit(event Event) {
+	event.Source = event.Ref
+	if event.Source == "" && strings.HasPrefix(event.Type, "environment_") {
+		event.Source = s.environment
+	}
+	if event.Source == "" {
+		event.Source = "rpm"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sink := range s.sinks {
+		if sink != nil {
+			sink.Emit(event)
+		}
+	}
 }
 
 type PrefixWriter struct {

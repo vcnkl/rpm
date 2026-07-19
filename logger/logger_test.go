@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -189,4 +191,44 @@ func TestLogger_Writer(t *testing.T) {
 	n, err := writer.Write([]byte("test message"))
 	assert.NoError(t, err)
 	assert.Equal(t, 12, n)
+}
+
+func TestLogger_Destination(t *testing.T) {
+	var destination bytes.Buffer
+	log := NewWithDateTimeFormat(InfoLevel, time.RFC3339, &destination).WithPrefix("app:build")
+	log.Info("completed", String("status", "ok"))
+
+	var event map[string]any
+	assert.NoError(t, json.Unmarshal(bytes.TrimSpace(destination.Bytes()), &event))
+	assert.Equal(t, "completed", event["message"])
+	assert.Equal(t, "app:build", event["target"])
+	assert.Equal(t, "ok", event["status"])
+}
+
+func TestLogger_OutputWithoutDestination(t *testing.T) {
+	var output bytes.Buffer
+	log := NewWithDateTimeFormat(InfoLevel, time.RFC3339).WithPrefix("app:serve")
+	data := []byte("raw child output\n")
+
+	n, err := log.Output(&output).Write(data)
+
+	assert.NoError(t, err)
+	assert.Equal(t, len(data), n)
+	assert.Equal(t, data, output.Bytes())
+}
+
+func TestLogger_OutputWithDestination(t *testing.T) {
+	var raw bytes.Buffer
+	var destination bytes.Buffer
+	log := NewWithDateTimeFormat(InfoLevel, time.RFC3339, &destination).WithPrefix("app:serve")
+
+	n, err := log.Output(&raw).Write([]byte("structured child output\n"))
+
+	assert.NoError(t, err)
+	assert.Equal(t, 24, n)
+	assert.Empty(t, raw.Bytes())
+	var event map[string]any
+	assert.NoError(t, json.Unmarshal(bytes.TrimSpace(destination.Bytes()), &event))
+	assert.Equal(t, "structured child output", event["message"])
+	assert.Equal(t, "app:serve", event["target"])
 }

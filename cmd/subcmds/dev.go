@@ -1,7 +1,6 @@
 package subcmds
 
 import (
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -32,7 +31,14 @@ func DevCmd() *cli.Command {
 				level = logger.DebugLevel
 			}
 			cfg := loadConfig(ctx)
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
+			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Dev.Out)
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
+			}
+			if logFile != nil {
+				defer closeLogFile(logFile)
+			}
+			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
 
 			graph := dag.NewGraph()
 			for _, bundle := range cfg.Bundles() {
@@ -91,20 +97,14 @@ func DevCmd() *cli.Command {
 				return nil
 			}
 
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-			devCtx, cancel := signal.NotifyContext(ctx.Context, syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
-
-			go func() {
-				<-sigCh
-				log.Info("shutting down...")
-				cancel()
-			}()
+			devCtx, stopSignals := signal.NotifyContext(ctx.Context, syscall.SIGINT, syscall.SIGTERM)
+			defer stopSignals()
 
 			action := actions.NewDevAction(cfg, graph, log)
 			result, err := action.Execute(devCtx, targetIDs)
+			if devCtx.Err() != nil {
+				log.Info("shutting down...")
+			}
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}

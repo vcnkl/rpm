@@ -24,7 +24,7 @@ Recommended to check `.rpm/envs` into version control and ignore `.rpm/cache`.
 | `rpm dev [<bundle:target>]`                | `--dry-run`                             | Run development mode                                |
 | `rpm graph [<target>]`                     | `--format text\|json\|dot`, `--reverse` | Print dependency graph                              |
 
-Global flags: `-d/--debug`, `-c/--config <path>` and `-j/--jobs <n>`
+Global flags: `-d/--debug`, `-c/--config <path>`, `-j/--jobs <n>` and `--logs[=true|false]`
 
 ## repo.yml
 
@@ -45,11 +45,26 @@ Repo config options
 | `init`                     | list   | -         | Steps with `label`, `check_cmd` and `install_cmd` run by `rpm init`                                                          |
 | `ignore`                   | list   | -         | Bundle path globs to ignore globally (good idea to ignore build directories here)                                            |
 | `logger.datetime.format`   | string | `RFC3339` | Go time layout for log timestamps                                                                                            |
+| `logs.enabled`             | bool   | `false`   | Write persistent JSON logs for build, test, dev and env up                                                                   |
+| `logs.build.out`           | string | `log/rpm/build` | Build log directory relative to the repo root                                                                         |
+| `logs.test.out`            | string | `log/rpm/test` | Test log directory relative to the repo root                                                                           |
+| `logs.dev.out`             | string | `log/rpm/dev` | Dev log directory relative to the repo root                                                                             |
+| `logs.env.out`             | string | `log/rpm/env` | Environment log directory relative to the repo root                                                                     |
 
 ```yaml
 project:
   name: local-stack
 shell: /usr/bin/env bash
+logs:
+  enabled: false
+  build:
+    out: log/rpm/build
+  test:
+    out: log/rpm/test
+  dev:
+    out: log/rpm/dev
+  env:
+    out: log/rpm/env
 env:
   vars:
     APP_ENV: local
@@ -69,6 +84,10 @@ env:
       ports:
         - "6379"
 ```
+
+Log output paths are relative to the repo root and cannot escape it. RPM creates no log directories while persistent logging is disabled. `--logs` enables persistent logging even when `logs.enabled` is false. `--logs=false` disables it when `logs.enabled` is true.
+
+Build, test and dev files use `<out>/<UTC epoch milliseconds>.txt`. Environment files use `<logs.env.out>/<environment>/<UTC epoch milliseconds>.txt`. Each file contains JSON events, one per line. Build, test and dev files receive the same structured records emitted to the terminal, including target output. Environment files receive the same source-decorated runtime events as the terminal or TUI. `source` is the event ref, the environment name for environment lifecycle events or `rpm` when neither is available.
 
 ## rpm.yml
 

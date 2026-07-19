@@ -36,6 +36,7 @@ type EnvUpOptions struct {
 	NoDeps         bool
 	NoReload       bool
 	NonInteractive bool
+	LogDestination io.Writer
 }
 
 func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
@@ -51,6 +52,10 @@ func (a *EnvAction) Up(ctx context.Context, opts EnvUpOptions) error {
 	if !opts.NonInteractive {
 		progSink = envtui.NewProgramSink()
 		sink = progSink
+	}
+	if opts.LogDestination != nil {
+		fileSink := envruntime.NewLineEventSink(opts.LogDestination, opts.LogDestination)
+		sink = envruntime.NewSourceEventSink(plan.Environment.Name, sink, fileSink)
 	}
 
 	shellRunner := envruntime.NewShellProcessRunner(a.config.Repo().Shell, a.out, a.err)

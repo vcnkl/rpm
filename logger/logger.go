@@ -26,6 +26,7 @@ type Logger interface {
 	Error(msg string, fields ...Field)
 	WithPrefix(prefix string) Logger
 	Writer() io.Writer
+	Output(out io.Writer) io.Writer
 }
 
 type Field struct {
@@ -54,29 +55,37 @@ func Bool(key string, value bool) Field {
 }
 
 type logger struct {
-	zlog   zerolog.Logger
-	prefix string
+	zlog        zerolog.Logger
+	prefix      string
+	destination bool
 }
 
 func New(level Level) Logger {
 	return NewWithDateTimeFormat(level, "")
 }
 
-func NewWithDateTimeFormat(level Level, dateTimeFormat string) Logger {
+func NewWithDateTimeFormat(level Level, dateTimeFormat string, destinations ...io.Writer) Logger {
 	dateTimeFormat = normalizeDateTimeFormat(dateTimeFormat)
 	zerolog.TimeFieldFormat = dateTimeFormat
 
 	out := os.Stdout
-	var zl zerolog.Logger
+	var terminal io.Writer = out
 
 	if isatty.IsTerminal(out.Fd()) {
-		zl = zerolog.New(zerolog.ConsoleWriter{
+		terminal = zerolog.ConsoleWriter{
 			Out:        out,
 			TimeFormat: dateTimeFormat,
-		}).With().Timestamp().Logger()
-	} else {
-		zl = zerolog.New(out).With().Timestamp().Logger()
+		}
 	}
+	writers := []io.Writer{terminal}
+	hasDestination := false
+	for _, destination := range destinations {
+		if destination != nil {
+			writers = append(writers, destination)
+			hasDestination = true
+		}
+	}
+	zl := zerolog.New(zerolog.MultiLevelWriter(writers...)).With().Timestamp().Logger()
 
 	switch level {
 	case DebugLevel:
@@ -89,7 +98,7 @@ func NewWithDateTimeFormat(level Level, dateTimeFormat string) Logger {
 		zl = zl.Level(zerolog.ErrorLevel)
 	}
 
-	return &logger{zlog: zl}
+	return &logger{zlog: zl, destination: hasDestination}
 }
 
 func normalizeDateTimeFormat(dateTimeFormat string) string {
@@ -101,13 +110,21 @@ func normalizeDateTimeFormat(dateTimeFormat string) string {
 
 func (l *logger) WithPrefix(prefix string) Logger {
 	return &logger{
-		zlog:   l.zlog.With().Str("target", prefix).Logger(),
-		prefix: prefix,
+		zlog:        l.zlog.With().Str("target", prefix).Logger(),
+		prefix:      prefix,
+		destination: l.destination,
 	}
 }
 
 func (l *logger) Writer() io.Writer {
 	return &writer{logger: l}
+}
+
+func (l *logger) Output(out io.Writer) io.Writer {
+	if !l.destination {
+		return out
+	}
+	return l.Writer()
 }
 
 func (l *logger) applyFields(event *zerolog.Event, fields []Field) *zerolog.Event {
