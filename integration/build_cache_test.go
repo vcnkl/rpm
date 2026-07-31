@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -20,16 +19,7 @@ import (
 func TestIntegration_BuildCacheReportsSkippedOnSecondRun(t *testing.T) {
 	shouldSkip(t)
 
-	repoRoot := t.TempDir()
-	bundleDir := filepath.Join(repoRoot, "app")
-	srcDir := filepath.Join(bundleDir, "src")
-	require.NoError(t, os.MkdirAll(srcDir, 0755))
-
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(
-		"project:\n  name: cache-repo\nshell: /bin/sh\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "rpm.yml"), []byte(
-		"name: app\ntargets:\n  - name: artifact_build\n    in:\n      - \"src/*.txt\"\n    out:\n      - out.bin\n    cmd: cat src/*.txt > out.bin\n    config:\n      working_dir: local\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "main.txt"), []byte("source"), 0644))
+	repoRoot := loadFixtureRepo(t, "build-cache")
 
 	targetID := "app:artifact_build"
 

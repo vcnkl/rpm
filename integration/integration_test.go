@@ -196,7 +196,7 @@ func TestIntegration_EnvUpOrdersTargetsAndWaitsForReadiness(t *testing.T) {
 func TestIntegration_EnvUpResolvesDependencyPortsInDotenv(t *testing.T) {
 	shouldSkip(t)
 
-	repoDir := copySampleRepo(t)
+	repoDir := loadFixtureRepo(t, "sample-repo")
 	t.Cleanup(removeSampleRepoVolumes)
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoDir, "repo.yml"))
 	var out bytes.Buffer
@@ -230,11 +230,11 @@ func TestIntegration_EnvUpResolvesDependencyPortsInDotenv(t *testing.T) {
 		"the user's placeholder value must stay intact")
 }
 
-func copySampleRepo(t *testing.T) string {
+func loadFixtureRepo(t *testing.T, name string) string {
 	t.Helper()
-	src, err := filepath.Abs(filepath.Join("testdata", "sample-repo"))
+	src, err := filepath.Abs(filepath.Join("testdata", name))
 	require.NoError(t, err)
-	dst := filepath.Join(t.TempDir(), "sample-repo")
+	dst := filepath.Join(t.TempDir(), name)
 	require.NoError(t, filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -260,66 +260,21 @@ func copySampleRepo(t *testing.T) string {
 	return dst
 }
 
+func gitInitRepo(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "init", "--quiet")
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = dir
+	require.NoError(t, cmd.Run())
+}
+
 func newOrderedEnvironmentRepo(t *testing.T) *rootconfig.Config {
 	t.Helper()
 
-	repoRoot := t.TempDir()
-	files := map[string]string{
-		"repo.yml": "project:\n  name: ordered-repo\nshell: /bin/sh\n",
-		filepath.Join("app", "rpm.yml"): `name: app
-targets:
-  - name: positive_serve
-    cmd: echo positive
-    config:
-      index: 10
-  - name: zero_serve
-    cmd: echo zero
-    config:
-      index: 0
-  - name: negative_serve
-    cmd: |
-      until [ -f "$REPO_ROOT/readiness.release" ]; do
-        sleep 0.01
-      done
-      : > "$REPO_ROOT/negative.ready"
-    config:
-      index: -1
-      readiness-cmd: |
-        : > "$REPO_ROOT/readiness.entered"
-        until [ -f "$REPO_ROOT/readiness.release" ]; do
-          sleep 0.01
-        done
-        until [ -f "$REPO_ROOT/negative.ready" ]; do
-          sleep 0.01
-        done
-        printf readiness-complete
-  - name: baseline_serve
-    cmd: |
-      : > "$REPO_ROOT/baseline.started"
-      echo baseline
-`,
-		filepath.Join(".rpm", "envs", "ordered", "config.yml"): `version: 1
-name: ordered
-live_reload:
-  enabled: false
-targets:
-  - ref: app:positive_serve
-  - ref: app:zero_serve
-  - ref: app:negative_serve
-  - ref: app:baseline_serve
-`,
-	}
-	for path, data := range files {
-		fullPath := filepath.Join(repoRoot, path)
-		require.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
-		require.NoError(t, os.WriteFile(fullPath, []byte(data), 0644))
-	}
-	cmd := exec.Command("git", "init", "--quiet")
-	cmd.Dir = repoRoot
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "add", ".")
-	cmd.Dir = repoRoot
-	require.NoError(t, cmd.Run())
+	repoRoot := loadFixtureRepo(t, "ordered-env")
+	gitInitRepo(t, repoRoot)
 
 	return rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 }

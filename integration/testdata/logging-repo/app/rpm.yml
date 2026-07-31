@@ -1,0 +1,20 @@
+name: app
+targets:
+  - name: app_build
+    cmd: echo build-output
+  - name: app_test
+    cmd: echo test-output
+  - name: app_serve
+    cmd: echo dev-output
+    config:
+      reload: false
+  - name: before_task
+    cmd: echo before-output
+  - name: dep_task
+    cmd: echo dep-output
+  - name: main_serve
+    cmd: echo env-output
+    deps:
+      - :dep_task
+    config:
+      reload: false

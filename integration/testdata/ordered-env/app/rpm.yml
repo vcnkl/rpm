@@ -1,0 +1,31 @@
+name: app
+targets:
+  - name: positive_serve
+    cmd: echo positive
+    config:
+      index: 10
+  - name: zero_serve
+    cmd: echo zero
+    config:
+      index: 0
+  - name: negative_serve
+    cmd: |
+      until [ -f "$REPO_ROOT/readiness.release" ]; do
+        sleep 0.01
+      done
+      : > "$REPO_ROOT/negative.ready"
+    config:
+      index: -1
+      readiness-cmd: |
+        : > "$REPO_ROOT/readiness.entered"
+        until [ -f "$REPO_ROOT/readiness.release" ]; do
+          sleep 0.01
+        done
+        until [ -f "$REPO_ROOT/negative.ready" ]; do
+          sleep 0.01
+        done
+        printf readiness-complete
+  - name: baseline_serve
+    cmd: |
+      : > "$REPO_ROOT/baseline.started"
+      echo baseline

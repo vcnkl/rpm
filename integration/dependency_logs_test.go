@@ -31,8 +31,7 @@ func TestIntegration_DependencyContainerLogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	blueprint := fmt.Sprintf("dependency-logs-%d", time.Now().UTC().UnixNano())
-	repoRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte("project:\n  name: dependency-logs\nshell: /bin/sh\n"), 0644))
+	repoRoot := loadFixtureRepo(t, "dependency-logs")
 	repo := rootconfig.NewConfigWithRepoFile(filepath.Join(repoRoot, "repo.yml"))
 	postgresReady := `timeout 90 sh -c 'until docker exec "$DOCKER_CONTAINER_NAME" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done'`
 	nginxReady := `timeout 90 sh -c 'until docker exec "$DOCKER_CONTAINER_NAME" wget -q -O /dev/null http://127.0.0.1/; do sleep 1; done; i=0; while [ "$i" -lt 25 ]; do docker exec "$DOCKER_CONTAINER_NAME" wget -q -O /dev/null http://127.0.0.1/; i=$((i+1)); done'`

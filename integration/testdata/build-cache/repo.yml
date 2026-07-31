@@ -1,0 +1,3 @@
+project:
+  name: cache-repo
+shell: /bin/sh

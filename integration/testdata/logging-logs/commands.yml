@@ -1,0 +1,8 @@
+logs:
+  enabled: true
+  build:
+    out: records/build
+  test:
+    out: records/test
+  dev:
+    out: records/dev

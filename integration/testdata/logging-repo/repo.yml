@@ -1,0 +1,7 @@
+project:
+  name: persistent-logging
+shell: /bin/sh
+env:
+  deps:
+    - name: database
+      image: busybox:1

@@ -1,0 +1,9 @@
+version: 1
+name: ordered
+live_reload:
+  enabled: false
+targets:
+  - ref: app:positive_serve
+  - ref: app:zero_serve
+  - ref: app:negative_serve
+  - ref: app:baseline_serve

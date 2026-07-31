@@ -42,7 +42,7 @@ func TestIntegration_PersistentCommandLogging(t *testing.T) {
 	})
 
 	t.Run("yaml uses default path", func(t *testing.T) {
-		repoRoot := newLoggingRepo(t, "logs:\n  enabled: true\n")
+		repoRoot := newLoggingRepo(t, "enabled.yml")
 		runLoggingCommand(t, repoRoot, "build")
 		path := oneLogFile(t, filepath.Join(repoRoot, "log", "rpm", "build"))
 		assertLogFile(t, path, "build-output")
@@ -56,21 +56,13 @@ func TestIntegration_PersistentCommandLogging(t *testing.T) {
 	})
 
 	t.Run("explicit false disables yaml true", func(t *testing.T) {
-		repoRoot := newLoggingRepo(t, "logs:\n  enabled: true\n")
+		repoRoot := newLoggingRepo(t, "enabled.yml")
 		runLoggingCommand(t, repoRoot, "--logs=false", "build")
 		assert.NoDirExists(t, filepath.Join(repoRoot, "log"))
 	})
 
 	t.Run("custom command paths", func(t *testing.T) {
-		repoRoot := newLoggingRepo(t, `logs:
-  enabled: true
-  build:
-    out: records/build
-  test:
-    out: records/test
-  dev:
-    out: records/dev
-`)
+		repoRoot := newLoggingRepo(t, "commands.yml")
 		for _, command := range []struct {
 			name    string
 			message string
@@ -90,11 +82,7 @@ func TestIntegration_PersistentEnvironmentLogging(t *testing.T) {
 	shouldSkip(t)
 	t.Parallel()
 
-	repoRoot := newLoggingRepo(t, `logs:
-  enabled: true
-  env:
-    out: records/env
-`)
+	repoRoot := newLoggingRepo(t, "env.yml")
 	writeLoggingRuntime(t, repoRoot)
 	visible := runLoggingCommand(t, repoRoot, "env", "up", "local", "--non-interactive", "--no-deps", "--no-reload")
 	path := oneLogFile(t, filepath.Join(repoRoot, "records", "env", "local"))
@@ -141,47 +129,18 @@ func TestIntegration_DisabledEnvironmentLoggingPreservesSchema(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(repoRoot, "log"))
 }
 
-func newLoggingRepo(t *testing.T, logs string) string {
+func newLoggingRepo(t *testing.T, fragment string) string {
 	t.Helper()
-	repoRoot := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(repoRoot, "app"), 0755))
-	repo := `project:
-  name: persistent-logging
-shell: /bin/sh
-env:
-  deps:
-    - name: database
-      image: busybox:1
-` + logs
-	bundle := `name: app
-targets:
-  - name: app_build
-    cmd: echo build-output
-  - name: app_test
-    cmd: echo test-output
-  - name: app_serve
-    cmd: echo dev-output
-    config:
-      reload: false
-  - name: before_task
-    cmd: echo before-output
-  - name: dep_task
-    cmd: echo dep-output
-  - name: main_serve
-    cmd: echo env-output
-    deps:
-      - :dep_task
-    config:
-      reload: false
-`
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "repo.yml"), []byte(repo), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(repoRoot, "app", "rpm.yml"), []byte(bundle), 0644))
-	git := exec.Command("git", "init", "--quiet")
-	git.Dir = repoRoot
-	require.NoError(t, git.Run())
-	git = exec.Command("git", "add", ".")
-	git.Dir = repoRoot
-	require.NoError(t, git.Run())
+	repoRoot := loadFixtureRepo(t, "logging-repo")
+	if fragment != "" {
+		repoFile := filepath.Join(repoRoot, "repo.yml")
+		extra, err := os.ReadFile(filepath.Join("testdata", "logging-logs", fragment))
+		require.NoError(t, err)
+		base, err := os.ReadFile(repoFile)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(repoFile, append(base, extra...), 0644))
+	}
+	gitInitRepo(t, repoRoot)
 	return repoRoot
 }
 

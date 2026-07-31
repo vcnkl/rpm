@@ -1,0 +1,10 @@
+name: app
+targets:
+  - name: artifact_build
+    in:
+      - "src/*.txt"
+    out:
+      - out.bin
+    cmd: cat src/*.txt > out.bin
+    config:
+      working_dir: local
