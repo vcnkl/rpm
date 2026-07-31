@@ -119,11 +119,22 @@ func (b *planBuilder) plan() *RuntimePlan {
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Ref < targets[j].Ref })
 	watches := append([]Watch{}, b.watches...)
 	sort.Slice(watches, func(i, j int) bool { return watches[i].Target < watches[j].Target })
+	beforeRefs := make(map[string]struct{}, len(b.beforeTargets))
+	for _, bt := range b.beforeTargets {
+		beforeRefs[bt.Ref] = struct{}{}
+	}
+	depTargets := make([]TargetProcess, 0, len(b.depTargets))
+	for _, dt := range b.depTargets {
+		if _, ok := beforeRefs[dt.Ref]; ok {
+			continue
+		}
+		depTargets = append(depTargets, dt)
+	}
 	return &RuntimePlan{
 		Environment:   b.environment,
 		Dependencies:  dependencies,
 		BeforeTargets: append([]TargetProcess{}, b.beforeTargets...),
-		DepTargets:    append([]TargetProcess{}, b.depTargets...),
+		DepTargets:    depTargets,
 		Targets:       targets,
 		Watches:       watches,
 		RunOrder:      append([]string{}, b.runOrder...),

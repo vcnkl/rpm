@@ -97,6 +97,44 @@ rpm_run(order = ["api:codegen", "api:app_build", "api:serve"])
 	assert.Equal(t, "api:app_build", plan.DepTargets[1].Ref)
 }
 
+func TestInterpretDropsDepTargetAlsoDeclaredAsBeforeTarget(t *testing.T) {
+	src := []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_before_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {})
+rpm_dep_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {})
+rpm_dep_target(ref = "api:app_build", command = "go build ./...", workdir = "/repo/api", env = {})
+rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {}, reload = True)
+rpm_run(order = ["api:migrate", "api:app_build", "api:serve"])
+`)
+
+	plan, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
+
+	require.NoError(t, err)
+	require.Len(t, plan.BeforeTargets, 1)
+	assert.Equal(t, "api:migrate", plan.BeforeTargets[0].Ref)
+	require.Len(t, plan.DepTargets, 1)
+	assert.Equal(t, "api:app_build", plan.DepTargets[0].Ref)
+}
+
+func TestInterpretDropsDepTargetDeclaredBeforeMatchingBeforeTarget(t *testing.T) {
+	src := []byte(`
+rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
+rpm_dep_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {})
+rpm_dep_target(ref = "api:app_build", command = "go build ./...", workdir = "/repo/api", env = {})
+rpm_before_target(ref = "api:migrate", command = "go run migrations", workdir = "/repo/api", env = {})
+rpm_target(ref = "api:serve", command = "go run .", workdir = "/repo/api", env = {}, reload = True)
+rpm_run(order = ["api:migrate", "api:app_build", "api:serve"])
+`)
+
+	plan, err := envstarlark.InterpretSource(context.Background(), "local", "env.star", src)
+
+	require.NoError(t, err)
+	require.Len(t, plan.BeforeTargets, 1)
+	assert.Equal(t, "api:migrate", plan.BeforeTargets[0].Ref)
+	require.Len(t, plan.DepTargets, 1)
+	assert.Equal(t, "api:app_build", plan.DepTargets[0].Ref)
+}
+
 func TestInterpretRejectsDuplicateDepTargetRefs(t *testing.T) {
 	src := []byte(`
 rpm_environment(name = "local", live_reload = {"enabled": True, "debounce": "100ms"}, variables = {})
