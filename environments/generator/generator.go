@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/environments/spec"
+	rootconfig "github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/environments/spec"
 )
 
 const RepoRootToken = "${REPO_ROOT}"

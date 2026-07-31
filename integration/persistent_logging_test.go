@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/vcnkl/rpm/cmd"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	"github.com/vcwx/rpm/cmd"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 var loggingCommandMu sync.Mutex

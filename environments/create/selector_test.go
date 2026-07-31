@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	envtui "github.com/vcnkl/rpm/environments/tui"
-	"github.com/vcnkl/rpm/models"
+	envtui "github.com/vcwx/rpm/environments/tui"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestTargetSelectItemsGroupsRunnableTargetsByBundle(t *testing.T) {

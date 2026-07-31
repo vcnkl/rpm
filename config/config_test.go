@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestRepoConfig_SetDefaults(t *testing.T) {

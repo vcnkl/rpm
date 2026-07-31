@@ -1,8 +1,8 @@
 package subcmds
 
 import (
-	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/logger"
+	"github.com/vcwx/rpm/actions"
+	"github.com/vcwx/rpm/logger"
 
 	"github.com/urfave/cli/v2"
 )

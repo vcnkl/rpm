@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	"github.com/vcnkl/rpm/environments/spec"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
-	"github.com/vcnkl/rpm/models"
+	rootconfig "github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/environments/generator"
+	"github.com/vcwx/rpm/environments/spec"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestInterpretGeneratedPlan(t *testing.T) {

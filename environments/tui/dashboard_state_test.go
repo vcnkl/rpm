@@ -3,7 +3,7 @@ package envtui
 import (
 	"testing"
 
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 func find(units []unitState, ref string) (unitState, bool) {

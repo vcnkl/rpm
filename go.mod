@@ -1,4 +1,4 @@
-module github.com/vcnkl/rpm
+module github.com/vcwx/rpm
 
 go 1.24.4
 

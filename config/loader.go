@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vcnkl/rpm/git"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/git"
+	"github.com/vcwx/rpm/models"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"

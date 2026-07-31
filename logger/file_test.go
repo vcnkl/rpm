@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/vcnkl/rpm/logger"
+	"github.com/vcwx/rpm/logger"
 )
 
 func TestOpenFile(t *testing.T) {

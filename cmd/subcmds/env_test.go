@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
 
-	"github.com/vcnkl/rpm/cmd"
-	"github.com/vcnkl/rpm/cmd/subcmds"
-	rootconfig "github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
+	"github.com/vcwx/rpm/cmd"
+	"github.com/vcwx/rpm/cmd/subcmds"
+	rootconfig "github.com/vcwx/rpm/config"
+	envconfig "github.com/vcwx/rpm/environments/config"
 )
 
 func TestEnvHelpListsSubcommands(t *testing.T) {

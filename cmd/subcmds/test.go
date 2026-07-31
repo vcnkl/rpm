@@ -3,10 +3,10 @@ package subcmds
 import (
 	"strings"
 
-	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/dag"
-	"github.com/vcnkl/rpm/git"
-	"github.com/vcnkl/rpm/logger"
+	"github.com/vcwx/rpm/actions"
+	"github.com/vcwx/rpm/dag"
+	"github.com/vcwx/rpm/git"
+	"github.com/vcwx/rpm/logger"
 
 	"github.com/urfave/cli/v2"
 )

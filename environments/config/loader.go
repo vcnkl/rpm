@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/models"
+	rootconfig "github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/models"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"

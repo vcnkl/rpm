@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	rootconfig "github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/environments/generator"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 func TestLoadPlanResolvesRequiredDependenciesFromConfigRefs(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/vcnkl/rpm/pathsafe"
+	"github.com/vcwx/rpm/pathsafe"
 )
 
 func OpenFile(repoRoot string, out string, nested ...string) (io.WriteCloser, error) {

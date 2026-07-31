@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/dag"
-	rpmexec "github.com/vcnkl/rpm/exec"
-	"github.com/vcnkl/rpm/logger"
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/watcher"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/dag"
+	rpmexec "github.com/vcwx/rpm/exec"
+	"github.com/vcwx/rpm/logger"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/watcher"
 )
 
 type DevAction struct {

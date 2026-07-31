@@ -2,12 +2,12 @@
 
 Simple language-agnostic build and test tool with a development runtime for monorepos.
 
-![TUI demo](https://github.com/vcnkl/rpm/raw/main/docs/media/tui-demo.gif "Env runtime TUI demo")
+![TUI demo](https://github.com/vcwx/rpm/raw/main/docs/media/tui-demo.gif "Env runtime TUI demo")
 
 ## Install
 
 ```shell
-wget -qO- https://raw.githubusercontent.com/vcnkl/rpm/main/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/vcwx/rpm/main/install.sh | sh
 ```
 
 Recommended to check `.rpm/envs` into version control and ignore `.rpm/cache`.

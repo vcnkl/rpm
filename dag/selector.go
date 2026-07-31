@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/pathsafe"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/pathsafe"
 )
 
 type Selector struct {

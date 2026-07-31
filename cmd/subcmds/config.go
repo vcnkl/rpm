@@ -3,8 +3,8 @@ package subcmds
 import (
 	"io"
 
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/logger"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/logger"
 
 	"github.com/urfave/cli/v2"
 )

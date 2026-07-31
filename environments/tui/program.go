@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
-	"github.com/vcnkl/rpm/environments/metrics"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	"github.com/vcwx/rpm/environments/metrics"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 type Controller interface {

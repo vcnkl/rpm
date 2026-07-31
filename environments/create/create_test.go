@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
-	envcreate "github.com/vcnkl/rpm/environments/create"
-	"github.com/vcnkl/rpm/environments/generator"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	rootconfig "github.com/vcwx/rpm/config"
+	envconfig "github.com/vcwx/rpm/environments/config"
+	envcreate "github.com/vcwx/rpm/environments/create"
+	"github.com/vcwx/rpm/environments/generator"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
 )
 
 func TestRunCreateNonInteractiveWritesSortedBlueprint(t *testing.T) {

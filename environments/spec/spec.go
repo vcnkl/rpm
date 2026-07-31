@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	rootconfig "github.com/vcnkl/rpm/config"
-	rpmexec "github.com/vcnkl/rpm/exec"
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/pathsafe"
+	rootconfig "github.com/vcwx/rpm/config"
+	rpmexec "github.com/vcwx/rpm/exec"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/pathsafe"
 )
 
 type ResolvedEnvironment struct {

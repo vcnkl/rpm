@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vcnkl/rpm/dag"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/dag"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestNewStore(t *testing.T) {

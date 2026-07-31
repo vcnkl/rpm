@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/vcnkl/rpm/logger"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/logger"
+	"github.com/vcwx/rpm/models"
 )
 
 type Executor interface {

@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/dag"
-	"github.com/vcnkl/rpm/logger"
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/stores/builds"
+	"github.com/vcwx/rpm/actions"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/dag"
+	"github.com/vcwx/rpm/logger"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/stores/builds"
 )
 
 func TestIntegration_BuildCacheReportsSkippedOnSecondRun(t *testing.T) {

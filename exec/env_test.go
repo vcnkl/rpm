@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestLoadDotenv(t *testing.T) {

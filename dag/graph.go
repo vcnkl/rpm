@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/models"
 )
 
 type Node struct {

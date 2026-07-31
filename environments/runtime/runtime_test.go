@@ -13,8 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
 )
 
 func TestUpHonorsNoDepsAndNoReload(t *testing.T) {

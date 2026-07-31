@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="vcnkl/rpm"
+REPO="vcwx/rpm"
 BINARY="rpm"
 INSTALL_DIR="${HOME}/bin"
 

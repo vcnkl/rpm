@@ -11,8 +11,8 @@ import (
 	zone "github.com/lrstanley/bubblezone"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/vcnkl/rpm/environments/metrics"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	"github.com/vcwx/rpm/environments/metrics"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 type fakeController struct {

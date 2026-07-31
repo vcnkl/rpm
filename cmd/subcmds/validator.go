@@ -5,11 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/dag"
-	envconfig "github.com/vcnkl/rpm/environments/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/dag"
+	envconfig "github.com/vcwx/rpm/environments/config"
+	"github.com/vcwx/rpm/environments/generator"
+	"github.com/vcwx/rpm/models"
 
 	"github.com/pkg/errors"
 	"github.com/urfave/cli/v2"

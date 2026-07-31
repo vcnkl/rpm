@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	"github.com/vcnkl/rpm/environments/spec"
-	"github.com/vcnkl/rpm/models"
+	rootconfig "github.com/vcwx/rpm/config"
+	envconfig "github.com/vcwx/rpm/environments/config"
+	"github.com/vcwx/rpm/environments/generator"
+	"github.com/vcwx/rpm/environments/spec"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestRenderDeterministicOutput(t *testing.T) {

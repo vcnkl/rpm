@@ -1,6 +1,6 @@
 package spec
 
-import "github.com/vcnkl/rpm/models"
+import "github.com/vcwx/rpm/models"
 
 type RuntimeOptions struct {
 	NoReload bool

@@ -3,12 +3,12 @@ package subcmds
 import (
 	"fmt"
 
-	"github.com/vcnkl/rpm/actions"
-	"github.com/vcnkl/rpm/config"
-	envcreate "github.com/vcnkl/rpm/environments/create"
-	"github.com/vcnkl/rpm/environments/generator"
-	"github.com/vcnkl/rpm/environments/spec"
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/actions"
+	"github.com/vcwx/rpm/config"
+	envcreate "github.com/vcwx/rpm/environments/create"
+	"github.com/vcwx/rpm/environments/generator"
+	"github.com/vcwx/rpm/environments/spec"
+	"github.com/vcwx/rpm/models"
 
 	"github.com/urfave/cli/v2"
 )

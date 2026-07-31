@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vcnkl/rpm/cmd"
-	"github.com/vcnkl/rpm/version"
+	"github.com/vcwx/rpm/cmd"
+	"github.com/vcwx/rpm/version"
 )
 
 func TestNewAppRegistersEnvCommand(t *testing.T) {

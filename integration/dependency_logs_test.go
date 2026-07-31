@@ -16,12 +16,12 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/vcnkl/rpm/actions"
-	rootconfig "github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
-	"github.com/vcnkl/rpm/environments/runtime/docker"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	"github.com/vcwx/rpm/actions"
+	rootconfig "github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/environments/generator"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
+	"github.com/vcwx/rpm/environments/runtime/docker"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
 )
 
 func TestIntegration_DependencyContainerLogs(t *testing.T) {

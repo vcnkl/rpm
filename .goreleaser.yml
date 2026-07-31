@@ -20,7 +20,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/vcnkl/rpm/version.Version={{.Version}}
+      - -X github.com/vcwx/rpm/version.Version={{.Version}}
 
 archives:
   - id: rpm
@@ -45,7 +45,7 @@ changelog:
 
 release:
   github:
-    owner: vcnkl
+    owner: vcwx
     name: rpm
   draft: false
   prerelease: auto

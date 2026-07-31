@@ -3,8 +3,8 @@ package cmd
 import (
 	"runtime"
 
-	"github.com/vcnkl/rpm/cmd/subcmds"
-	"github.com/vcnkl/rpm/version"
+	"github.com/vcwx/rpm/cmd/subcmds"
+	"github.com/vcwx/rpm/version"
 
 	"github.com/urfave/cli/v2"
 )

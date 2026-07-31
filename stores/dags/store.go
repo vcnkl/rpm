@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/vcnkl/rpm/dag"
+	"github.com/vcwx/rpm/dag"
 )
 
 type Node struct {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestResolveWorkDir(t *testing.T) {

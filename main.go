@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/vcnkl/rpm/cmd"
+	"github.com/vcwx/rpm/cmd"
 )
 
 func main() {

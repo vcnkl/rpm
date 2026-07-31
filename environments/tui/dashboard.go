@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/harmonica"
 	zone "github.com/lrstanley/bubblezone"
-	"github.com/vcnkl/rpm/environments/metrics"
+	"github.com/vcwx/rpm/environments/metrics"
 )
 
 const (

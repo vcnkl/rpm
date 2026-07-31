@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/models"
 )
 
 type Config struct {

@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vcnkl/rpm/pathsafe"
+	"github.com/vcwx/rpm/pathsafe"
 )
 
 func HashInputs(repoRoot string, bundleRoot string, patterns []string) (string, error) {

@@ -3,7 +3,7 @@ package envtui
 import (
 	"sort"
 
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 type unitStatus string

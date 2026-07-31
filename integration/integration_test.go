@@ -19,14 +19,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/vcnkl/rpm/actions"
-	rootconfig "github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
-	"github.com/vcnkl/rpm/environments/runtime/docker"
-	"github.com/vcnkl/rpm/environments/spec"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
+	"github.com/vcwx/rpm/actions"
+	rootconfig "github.com/vcwx/rpm/config"
+	envconfig "github.com/vcwx/rpm/environments/config"
+	"github.com/vcwx/rpm/environments/generator"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
+	"github.com/vcwx/rpm/environments/runtime/docker"
+	"github.com/vcwx/rpm/environments/spec"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
 )
 
 func buildRpmBinary(t *testing.T) string {

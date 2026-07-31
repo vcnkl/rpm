@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
-	rpmexec "github.com/vcnkl/rpm/exec"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
+	rpmexec "github.com/vcwx/rpm/exec"
 )
 
 type PlanLoader interface {

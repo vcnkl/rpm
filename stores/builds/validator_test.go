@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/vcnkl/rpm/models"
+	"github.com/vcwx/rpm/models"
 )
 
 func TestNewValidator(t *testing.T) {

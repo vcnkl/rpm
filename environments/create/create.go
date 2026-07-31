@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"strings"
 
-	rootconfig "github.com/vcnkl/rpm/config"
-	envconfig "github.com/vcnkl/rpm/environments/config"
-	"github.com/vcnkl/rpm/environments/generator"
-	envspec "github.com/vcnkl/rpm/environments/spec"
-	envtui "github.com/vcnkl/rpm/environments/tui"
-	"github.com/vcnkl/rpm/models"
+	rootconfig "github.com/vcwx/rpm/config"
+	envconfig "github.com/vcwx/rpm/environments/config"
+	"github.com/vcwx/rpm/environments/generator"
+	envspec "github.com/vcwx/rpm/environments/spec"
+	envtui "github.com/vcwx/rpm/environments/tui"
+	"github.com/vcwx/rpm/models"
 
 	"github.com/pkg/errors"
 )

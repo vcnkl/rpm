@@ -4,8 +4,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/vcnkl/rpm/environments/metrics"
-	envruntime "github.com/vcnkl/rpm/environments/runtime"
+	"github.com/vcwx/rpm/environments/metrics"
+	envruntime "github.com/vcwx/rpm/environments/runtime"
 )
 
 const frameInterval = time.Second / 60

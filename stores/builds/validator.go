@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vcnkl/rpm/cache/hashing"
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/pathsafe"
+	"github.com/vcwx/rpm/cache/hashing"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/pathsafe"
 )
 
 type Validator struct {

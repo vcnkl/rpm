@@ -5,13 +5,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vcnkl/rpm/config"
-	"github.com/vcnkl/rpm/dag"
-	"github.com/vcnkl/rpm/exec"
-	"github.com/vcnkl/rpm/logger"
-	"github.com/vcnkl/rpm/models"
-	"github.com/vcnkl/rpm/stores/builds"
-	"github.com/vcnkl/rpm/version"
+	"github.com/vcwx/rpm/config"
+	"github.com/vcwx/rpm/dag"
+	"github.com/vcwx/rpm/exec"
+	"github.com/vcwx/rpm/logger"
+	"github.com/vcwx/rpm/models"
+	"github.com/vcwx/rpm/stores/builds"
+	"github.com/vcwx/rpm/version"
 )
 
 type BuildAction struct {

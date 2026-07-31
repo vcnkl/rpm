@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"time"
 
-	envstarlark "github.com/vcnkl/rpm/environments/starlark"
-	"github.com/vcnkl/rpm/watcher"
+	envstarlark "github.com/vcwx/rpm/environments/starlark"
+	"github.com/vcwx/rpm/watcher"
 )
 
 type WatcherFactory struct{}
