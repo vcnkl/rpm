@@ -369,22 +369,6 @@ func compareTargetOrder(left, right targetOrder) bool {
 	return left.ref < right.ref
 }
 
-func ResolveRepoEnv(repo *rootconfig.Config, blueprint *models.EnvironmentBlueprint) []EnvVar {
-	env := appendEnvMap(nil, repo.Repo().Env.Vars)
-	env = append(env, "REPO_ROOT="+repo.RepoRoot())
-	env = appendEnvMap(env, blueprint.Variables)
-	return mergeEnvVars(env)
-}
-
-func ResolveBundleEnv(repo *rootconfig.Config, bundle *models.Bundle, blueprint *models.EnvironmentBlueprint) []EnvVar {
-	env := appendEnvMap(nil, repo.Repo().Env.Vars)
-	env = append(env, "REPO_ROOT="+repo.RepoRoot())
-	env = append(env, "BUNDLE_ROOT="+filepath.Join(repo.RepoRoot(), bundle.Path))
-	env = appendEnvMap(env, bundle.Env)
-	env = appendEnvMap(env, blueprint.Variables)
-	return mergeEnvVars(env)
-}
-
 func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
 	env := os.Environ()
 	env = appendExplicitTargetEnv(env, repo, bundle, target, blueprint, bpTarget)
@@ -399,11 +383,6 @@ func ResolveTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *mo
 	}
 
 	return mergeEnvVars(env)
-}
-
-func ResolveGeneratedTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) []EnvVar {
-	env, _ := resolveGeneratedTargetEnv(repo, bundle, target, blueprint, bpTarget)
-	return env
 }
 
 func resolveGeneratedTargetEnv(repo *rootconfig.Config, bundle *models.Bundle, target *models.Target, blueprint *models.EnvironmentBlueprint, bpTarget models.EnvironmentTarget) ([]EnvVar, []EnvVar) {

@@ -7,7 +7,6 @@ import (
 
 	"github.com/vcwx/rpm/config"
 	"github.com/vcwx/rpm/dag"
-	"github.com/vcwx/rpm/logger"
 
 	"github.com/urfave/cli/v2"
 )
@@ -42,18 +41,10 @@ func GraphCmd() *cli.Command {
 				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
 			}
 
-			debug := ctx.Bool("debug")
 			format := validator.format
 			reverse := ctx.Bool("reverse")
 
-			level := logger.InfoLevel
-			if debug {
-				level = logger.DebugLevel
-			}
-
 			cfg := validator.cfg
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format)
-			_ = log
 			graph := validator.graph
 
 			var targetID string
@@ -63,7 +54,7 @@ func GraphCmd() *cli.Command {
 
 			switch format {
 			case "json":
-				return printJSON(graph, targetID, reverse)
+				return printJSON(graph, targetID)
 			case "dot":
 				return printDot(graph, targetID, reverse)
 			default:
@@ -140,7 +131,7 @@ type EdgeJSON struct {
 	To   string `json:"to"`
 }
 
-func printJSON(graph *dag.Graph, targetID string, reverse bool) error {
+func printJSON(graph *dag.Graph, targetID string) error {
 	var nodesToInclude map[string]*dag.Node
 
 	if targetID != "" {

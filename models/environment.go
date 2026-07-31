@@ -35,11 +35,3 @@ type ReloadPolicy struct {
 	Enabled  bool
 	Debounce string
 }
-
-type ResolvedEnvironment struct {
-	Name         string
-	Variables    map[string]string
-	Targets      []EnvironmentTarget
-	Dependencies []EnvironmentDependency
-	ReloadPolicy ReloadPolicy
-}

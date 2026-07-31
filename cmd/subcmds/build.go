@@ -1,11 +1,7 @@
 package subcmds
 
 import (
-	"strings"
-
 	"github.com/vcwx/rpm/actions"
-	"github.com/vcwx/rpm/dag"
-	"github.com/vcwx/rpm/git"
 	"github.com/vcwx/rpm/logger"
 	"github.com/vcwx/rpm/stores/builds"
 
@@ -43,24 +39,16 @@ func BuildCmd() *cli.Command {
 				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
 			}
 
-			debug := ctx.Bool("debug")
 			force := ctx.Bool("force")
 			dryRun := ctx.Bool("dry-run")
 			parallel := ctx.Int("jobs")
 
-			level := logger.InfoLevel
-			if debug {
-				level = logger.DebugLevel
-			}
 			cfg := validator.cfg
-			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Build.Out)
+			log, closeLog, err := newCommandLogger(ctx, cfg, cfg.Repo().Logs.Build.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
-			if logFile != nil {
-				defer closeLogFile(logFile)
-			}
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
+			defer closeLog()
 
 			graph := validator.graph
 
@@ -69,27 +57,9 @@ func BuildCmd() *cli.Command {
 				log.Warn("failed to load cache", logger.Err(err))
 			}
 
-			var targetIDs []string
-
-			selector := dag.NewSelector(graph, cfg.RepoRoot())
-			if affected {
-				changedFiles, err := git.GetChangedFiles(cfg.RepoRoot())
-				if err != nil {
-					return cli.Exit("error: "+err.Error(), 1)
-				}
-				targets := selector.SelectAffected(changedFiles)
-				for _, t := range targets {
-					if strings.HasSuffix(t.Target.Name, "_build") {
-						targetIDs = append(targetIDs, t.ID)
-					}
-				}
-			} else if ctx.Args().Len() > 0 {
-				targetIDs = validator.targetIds
-			} else {
-				targets := selector.SelectBySuffix("_build")
-				for _, t := range targets {
-					targetIDs = append(targetIDs, t.ID)
-				}
+			targetIDs, err := selectCommandTargets(ctx, validator, "_build")
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
 			}
 
 			if len(targetIDs) == 0 {

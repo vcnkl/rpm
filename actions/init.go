@@ -7,7 +7,6 @@ import (
 
 	"github.com/vcwx/rpm/config"
 	"github.com/vcwx/rpm/dag"
-	rpmexec "github.com/vcwx/rpm/exec"
 	"github.com/vcwx/rpm/logger"
 	"github.com/vcwx/rpm/models"
 	"github.com/vcwx/rpm/stores/dags"
@@ -86,17 +85,7 @@ func (a *InitAction) Execute(ctx context.Context) (*models.Result, error) {
 
 		targetLog.Info("running...")
 
-		bundle := a.config.Bundles()[target.BundleName]
-		env := rpmexec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-		workDir := rpmexec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-		err = rpmexec.RunCommand(ctx, target.Cmd, &rpmexec.ShellOptions{
-			WorkDir: workDir,
-			Env:     env,
-			Shell:   a.config.Repo().Shell,
-			Stdout:  targetLog.Writer(),
-			Stderr:  targetLog.Writer(),
-		})
+		err = runTargetCommand(ctx, a.config, target, targetLog.Writer())
 
 		if err != nil {
 			targetLog.Error("failed", logger.Err(err))

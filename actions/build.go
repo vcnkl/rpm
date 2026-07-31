@@ -116,17 +116,7 @@ func (a *BuildAction) buildTarget(ctx context.Context, node *dag.Node) error {
 	targetLog.Info("building...")
 	buildStart := time.Now()
 
-	bundle := a.config.Bundles()[target.BundleName]
-	env := exec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-	workDir := exec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-	err = exec.RunCommand(ctx, target.Cmd, &exec.ShellOptions{
-		WorkDir: workDir,
-		Env:     env,
-		Shell:   a.config.Repo().Shell,
-		Stdout:  targetLog.Writer(),
-		Stderr:  targetLog.Writer(),
-	})
+	err = runTargetCommand(ctx, a.config, target, targetLog.Writer())
 
 	if err != nil {
 		targetLog.Error("build failed", logger.Err(err))
@@ -164,16 +154,6 @@ func (a *BuildAction) DryRun(targetIDs []string) {
 	}
 
 	for _, node := range sorted {
-		target := node.Target
-		bundle := a.config.Bundles()[target.BundleName]
-		env := exec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-		workDir := exec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-		a.log.Info("target", logger.String("id", target.ID()))
-		a.log.Info("workdir", logger.String("path", workDir))
-		a.log.Info("command", logger.String("cmd", target.Cmd))
-		for _, e := range env {
-			a.log.Info("env", logger.String("var", e))
-		}
+		logTargetPlan(a.log, a.config, node.Target)
 	}
 }

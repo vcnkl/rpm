@@ -3,7 +3,6 @@ package starlark
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -429,21 +428,6 @@ func boolFromValue(value gostarlark.Value) (bool, error) {
 	return bool(boolValue), nil
 }
 
-func intFromValue(value gostarlark.Value) (int, error) {
-	if value == nil {
-		return 0, fmt.Errorf("expected int, got missing value")
-	}
-	intValue, ok := value.(gostarlark.Int)
-	if !ok {
-		return 0, fmt.Errorf("expected int, got %s", value.Type())
-	}
-	i, ok := intValue.Int64()
-	if !ok || i > math.MaxInt || i < math.MinInt {
-		return 0, fmt.Errorf("int out of range")
-	}
-	return int(i), nil
-}
-
 func builder(thread *gostarlark.Thread) *planBuilder {
 	value := thread.Local("plan")
 	builder, ok := value.(*planBuilder)
@@ -460,5 +444,3 @@ func evalError(err error) error {
 	}
 	return err
 }
-
-var _ = intFromValue

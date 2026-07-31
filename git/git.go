@@ -25,9 +25,9 @@ func IsTracked(path string) (bool, error) {
 	return true, nil
 }
 
-func GetChangedFiles(repoRoot string) ([]string, error) {
-	cmd := exec.Command("git", "diff", "--name-only", "HEAD")
-	cmd.Dir = repoRoot
+func runGit(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
 	output, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -36,27 +36,23 @@ func GetChangedFiles(repoRoot string) ([]string, error) {
 			return nil, err
 		}
 	}
+	return output, nil
+}
 
-	stagedCmd := exec.Command("git", "diff", "--name-only", "--cached")
-	stagedCmd.Dir = repoRoot
-	stagedOutput, err := stagedCmd.Output()
+func GetChangedFiles(repoRoot string) ([]string, error) {
+	output, err := runGit(repoRoot, "diff", "--name-only", "HEAD")
 	if err != nil {
-		var exitErr *exec.ExitError
-		ok := errors.As(err, &exitErr)
-		if ok && len(exitErr.Stderr) > 0 {
-			return nil, err
-		}
+		return nil, err
 	}
 
-	untrackedCmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
-	untrackedCmd.Dir = repoRoot
-	untrackedOutput, err := untrackedCmd.Output()
+	stagedOutput, err := runGit(repoRoot, "diff", "--name-only", "--cached")
 	if err != nil {
-		var exitErr *exec.ExitError
-		ok := errors.As(err, &exitErr)
-		if ok && len(exitErr.Stderr) > 0 {
-			return nil, err
-		}
+		return nil, err
+	}
+
+	untrackedOutput, err := runGit(repoRoot, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
 	}
 
 	combined := string(output) + string(stagedOutput) + string(untrackedOutput)

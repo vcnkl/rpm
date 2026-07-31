@@ -6,7 +6,6 @@ import (
 
 	"github.com/vcwx/rpm/config"
 	"github.com/vcwx/rpm/dag"
-	"github.com/vcwx/rpm/exec"
 	"github.com/vcwx/rpm/logger"
 	"github.com/vcwx/rpm/models"
 )
@@ -29,8 +28,7 @@ func (a *RunAction) Execute(ctx context.Context, targetID string) (*models.Resul
 	start := time.Now()
 	result := &models.Result{}
 
-	node, ok := a.graph.Nodes[targetID]
-	if !ok {
+	if _, ok := a.graph.Nodes[targetID]; !ok {
 		return nil, &dag.TargetNotFoundError{ID: targetID}
 	}
 
@@ -52,7 +50,6 @@ func (a *RunAction) Execute(ctx context.Context, targetID string) (*models.Resul
 		result.Executed = append(result.Executed, n.ID)
 	}
 
-	_ = node
 	result.Duration = time.Since(start)
 	return result, nil
 }
@@ -63,17 +60,7 @@ func (a *RunAction) runTarget(ctx context.Context, node *dag.Node) error {
 
 	targetLog.Info("running...")
 
-	bundle := a.config.Bundles()[target.BundleName]
-	env := exec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-	workDir := exec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-	err := exec.RunCommand(ctx, target.Cmd, &exec.ShellOptions{
-		WorkDir: workDir,
-		Env:     env,
-		Shell:   a.config.Repo().Shell,
-		Stdout:  targetLog.Writer(),
-		Stderr:  targetLog.Writer(),
-	})
+	err := runTargetCommand(ctx, a.config, target, targetLog.Writer())
 
 	if err != nil {
 		targetLog.Error("failed", logger.Err(err))

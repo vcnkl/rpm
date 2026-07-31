@@ -20,10 +20,6 @@ import (
 	rpmexec "github.com/vcwx/rpm/exec"
 )
 
-type PlanLoader interface {
-	LoadPlan(ctx context.Context, blueprint string) (*envstarlark.RuntimePlan, error)
-}
-
 type ProcessRunner interface {
 	Start(ctx context.Context, target envstarlark.TargetProcess, sink EventSink) (Process, error)
 }
@@ -678,7 +674,7 @@ func (r *ShellProcessRunner) Start(ctx context.Context, target envstarlark.Targe
 	args = append(args, "-c", target.Command)
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Dir = target.WorkingDir
-	cmd.Env = processEnv(target.Env)
+	cmd.Env = ProcessEnv(target.Env)
 	stdout := &lineEventWriter{sink: sink, ref: target.Ref, stream: "stdout"}
 	stderr := &lineEventWriter{sink: sink, ref: target.Ref, stream: "stderr"}
 	cmd.Stdout = stdout
@@ -798,20 +794,6 @@ func (s *SourceEventSink) Emit(event Event) {
 	}
 }
 
-type PrefixWriter struct {
-	Sink   EventSink
-	Ref    string
-	Stream string
-}
-
-func (w PrefixWriter) Write(data []byte) (int, error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		w.Sink.Emit(Event{Type: EventProcessOutput, Ref: w.Ref, Stream: w.Stream, Line: scanner.Text()})
-	}
-	return len(data), scanner.Err()
-}
-
 type lineEventWriter struct {
 	sink    EventSink
 	ref     string
@@ -861,7 +843,7 @@ type discardSink struct{}
 
 func (discardSink) Emit(Event) {}
 
-func processEnv(values map[string]string) []string {
+func ProcessEnv(values map[string]string) []string {
 	envMap := make(map[string]string)
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")

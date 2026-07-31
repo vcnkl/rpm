@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"os/exec"
 	"reflect"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -364,31 +362,8 @@ func (shellReadinessRunner) Run(ctx context.Context, shell string, command strin
 	args := append([]string{}, parts[1:]...)
 	args = append(args, "-c", command)
 	cmd := exec.CommandContext(ctx, parts[0], args...)
-	cmd.Env = readinessEnv(env)
+	cmd.Env = envruntime.ProcessEnv(env)
 	return cmd.Run()
-}
-
-func readinessEnv(values map[string]string) []string {
-	envMap := make(map[string]string)
-	for _, item := range os.Environ() {
-		key, value, ok := strings.Cut(item, "=")
-		if ok {
-			envMap[key] = value
-		}
-	}
-	for key, value := range values {
-		envMap[key] = value
-	}
-	keys := make([]string, 0, len(envMap))
-	for key := range envMap {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	env := make([]string, 0, len(keys))
-	for _, key := range keys {
-		env = append(env, key+"="+envMap[key])
-	}
-	return env
 }
 
 func (c *CLI) Down(ctx context.Context, blueprint string, plan *envstarlark.RuntimePlan) error {

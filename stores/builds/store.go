@@ -11,7 +11,6 @@ import (
 
 type Entry struct {
 	InputHash  string    `json:"input_hash"`
-	OutputHash string    `json:"output_hash,omitempty"`
 	Timestamp  time.Time `json:"timestamp"`
 	DurationMs int64     `json:"duration_ms"`
 }

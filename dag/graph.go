@@ -39,7 +39,7 @@ func (g *Graph) AddTarget(t *models.Target) {
 func (g *Graph) Resolve(bundles map[string]*models.Bundle) error {
 	for _, node := range g.Nodes {
 		for _, depRef := range node.Target.Deps {
-			depID, err := g.resolveRef(depRef, node.Target.BundleName, bundles)
+			depID, err := g.resolveRef(depRef, node.Target.BundleName)
 			if err != nil {
 				return fmt.Errorf("failed to resolve dependency %s for target %s: %w", depRef, node.ID, err)
 			}
@@ -57,7 +57,7 @@ func (g *Graph) Resolve(bundles map[string]*models.Bundle) error {
 	return nil
 }
 
-func (g *Graph) resolveRef(ref, currentBundle string, bundles map[string]*models.Bundle) (string, error) {
+func (g *Graph) resolveRef(ref, currentBundle string) (string, error) {
 	if strings.HasPrefix(ref, ":") {
 		return currentBundle + ref, nil
 	}

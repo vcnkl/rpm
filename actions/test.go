@@ -64,17 +64,7 @@ func (a *TestAction) runTest(ctx context.Context, node *dag.Node) error {
 
 	targetLog.Info("testing...")
 
-	bundle := a.config.Bundles()[target.BundleName]
-	env := exec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-	workDir := exec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-	err := exec.RunCommand(ctx, target.Cmd, &exec.ShellOptions{
-		WorkDir: workDir,
-		Env:     env,
-		Shell:   a.config.Repo().Shell,
-		Stdout:  targetLog.Writer(),
-		Stderr:  targetLog.Writer(),
-	})
+	err := runTargetCommand(ctx, a.config, target, targetLog.Writer())
 
 	if err != nil {
 		targetLog.Error("test failed", logger.Err(err))

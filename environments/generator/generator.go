@@ -172,12 +172,6 @@ func dict(values map[string]string) string {
 	return buf.String()
 }
 
-func stringList(values []string) string {
-	items := append([]string{}, values...)
-	sort.Strings(items)
-	return orderedStringList(items)
-}
-
 func orderedStringList(values []string) string {
 	if len(values) == 0 {
 		return "[]"

@@ -1,11 +1,7 @@
 package subcmds
 
 import (
-	"strings"
-
 	"github.com/vcwx/rpm/actions"
-	"github.com/vcwx/rpm/dag"
-	"github.com/vcwx/rpm/git"
 	"github.com/vcwx/rpm/logger"
 
 	"github.com/urfave/cli/v2"
@@ -37,47 +33,20 @@ func TestCmd() *cli.Command {
 				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
 			}
 
-			debug := ctx.Bool("debug")
 			parallel := ctx.Int("jobs")
 
-			level := logger.InfoLevel
-			if debug {
-				level = logger.DebugLevel
-			}
 			cfg := validator.cfg
-			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Test.Out)
+			log, closeLog, err := newCommandLogger(ctx, cfg, cfg.Repo().Logs.Test.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
-			if logFile != nil {
-				defer closeLogFile(logFile)
-			}
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
+			defer closeLog()
 
 			graph := validator.graph
 
-			suffix := "_test"
-			var targetIDs []string
-
-			selector := dag.NewSelector(graph, cfg.RepoRoot())
-			if affected {
-				changedFiles, err := git.GetChangedFiles(cfg.RepoRoot())
-				if err != nil {
-					return cli.Exit("error: "+err.Error(), 1)
-				}
-				targets := selector.SelectAffected(changedFiles)
-				for _, t := range targets {
-					if strings.HasSuffix(t.Target.Name, suffix) {
-						targetIDs = append(targetIDs, t.ID)
-					}
-				}
-			} else if ctx.Args().Len() > 0 {
-				targetIDs = validator.targetIds
-			} else {
-				targets := selector.SelectBySuffix(suffix)
-				for _, t := range targets {
-					targetIDs = append(targetIDs, t.ID)
-				}
+			targetIDs, err := selectCommandTargets(ctx, validator, "_test")
+			if err != nil {
+				return cli.Exit("error: "+err.Error(), 1)
 			}
 
 			if len(targetIDs) == 0 {

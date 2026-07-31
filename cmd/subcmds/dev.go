@@ -32,22 +32,14 @@ func DevCmd() *cli.Command {
 				return cli.Exit(ValidationError(validation.errors()).Error(), 1)
 			}
 
-			debug := ctx.Bool("debug")
 			dryRun := ctx.Bool("dry-run")
 
-			level := logger.InfoLevel
-			if debug {
-				level = logger.DebugLevel
-			}
 			cfg := validator.cfg
-			logFile, err := openLogFile(ctx, cfg, cfg.Repo().Logs.Dev.Out)
+			log, closeLog, err := newCommandLogger(ctx, cfg, cfg.Repo().Logs.Dev.Out)
 			if err != nil {
 				return cli.Exit("error: "+err.Error(), 1)
 			}
-			if logFile != nil {
-				defer closeLogFile(logFile)
-			}
-			log := logger.NewWithDateTimeFormat(level, cfg.Repo().Logger.DateTime.Format, logFile)
+			defer closeLog()
 
 			graph := validator.graph
 

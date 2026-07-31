@@ -253,17 +253,7 @@ func (a *DevAction) DryRun(targetIDs []string) {
 			continue
 		}
 
-		target := node.Target
-		bundle := a.config.Bundles()[target.BundleName]
-		env := rpmexec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-		workDir := rpmexec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-		a.log.Info("target", logger.String("id", target.ID()))
-		a.log.Info("workdir", logger.String("path", workDir))
-		a.log.Info("command", logger.String("cmd", target.Cmd))
-		for _, e := range env {
-			a.log.Info("env", logger.String("var", e))
-		}
+		logTargetPlan(a.log, a.config, node.Target)
 	}
 }
 
@@ -287,17 +277,7 @@ func (a *DevAction) runDependencies(ctx context.Context, targetIDs []string) err
 			targetLog.Info("running dependency...")
 		}
 
-		bundle := a.config.Bundles()[target.BundleName]
-		env := rpmexec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), bundle, target)
-		workDir := rpmexec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-		runErr := rpmexec.RunCommand(ctx, target.Cmd, &rpmexec.ShellOptions{
-			WorkDir: workDir,
-			Env:     env,
-			Shell:   a.config.Repo().Shell,
-			Stdout:  targetLog.Writer(),
-			Stderr:  targetLog.Writer(),
-		})
+		runErr := runTargetCommand(ctx, a.config, target, targetLog.Writer())
 
 		if runErr != nil {
 			return runErr
@@ -327,17 +307,7 @@ func (a *DevAction) runBundleBuildTargets(ctx context.Context, _ string, targetI
 			buildLog.Info("running dependency...")
 		}
 
-		b := a.config.Bundles()[target.BundleName]
-		env := rpmexec.ComposeEnv(a.config.RepoRoot(), a.config.Repo(), b, target)
-		workDir := rpmexec.ResolveWorkDir(a.config.RepoRoot(), target)
-
-		err = rpmexec.RunCommand(ctx, target.Cmd, &rpmexec.ShellOptions{
-			WorkDir: workDir,
-			Env:     env,
-			Shell:   a.config.Repo().Shell,
-			Stdout:  buildLog.Writer(),
-			Stderr:  buildLog.Writer(),
-		})
+		err = runTargetCommand(ctx, a.config, target, buildLog.Writer())
 
 		if err != nil {
 			buildLog.Error("build failed", logger.Err(err))
